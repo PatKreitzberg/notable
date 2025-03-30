@@ -26,6 +26,7 @@ import com.ethran.notable.modals.A4_HEIGHT
 import com.ethran.notable.modals.A4_WIDTH
 
 
+
 fun drawCanvas(context: Context, pageId: String): Bitmap {
     if (Looper.getMainLooper().isCurrentThread)
         Log.e(TAG, "Exporting is done on main thread.")

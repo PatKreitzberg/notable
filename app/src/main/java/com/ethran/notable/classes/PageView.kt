@@ -40,6 +40,7 @@ import java.nio.file.Files
 import kotlin.io.path.Path
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.system.measureTimeMillis
 
 class PageView(
@@ -227,7 +228,15 @@ class PageView(
         val maxImageBottom = if (images.isNotEmpty()) images.maxOf { it.y + it.height } else 0
         val maxContentBottom = max(maxStrokeBottom.toInt(), maxImageBottom) + 50
 
-        height = max(maxContentBottom, viewHeight)
+        if (usePagination) {
+            // For pagination, calculate height based on the number of pages needed
+            // to fit all content plus gaps between pages
+            val contentPages = PaginationConstants.getPageNumberForPosition(maxContentBottom, pageHeight) + 1
+            height = contentPages * (pageHeight + PaginationConstants.PAGE_GAP)
+        } else {
+            // For non-pagination, use the old approach
+            height = max(maxContentBottom, viewHeight)
+        }
     }
 
     fun computeWidth(): Int {
@@ -438,36 +447,20 @@ class PageView(
 
     fun updateScroll(_delta: Int) {
         var delta = _delta
-        if (scroll + delta < 0) delta = 0 - scroll
 
-        // Snap to page boundaries if pagination is enabled
-        if (usePagination && delta != 0) {
-            val currentPage = PaginationConstants.getPageNumberForPosition(scroll, pageHeight)
-            val newScroll = scroll + delta
-            val newPage = PaginationConstants.getPageNumberForPosition(newScroll, pageHeight)
-
-            // If crossing a page boundary, snap to it
-            if (currentPage != newPage) {
-                // Determine if scrolling up or down
-                if (delta > 0) { // Scrolling down
-                    // Snap to the top of the next page
-                    val nextPageTop = PaginationConstants.getPageTopPosition(currentPage + 1, pageHeight)
-                    delta = nextPageTop - scroll
-                } else { // Scrolling up
-                    // Snap to the top of the current page
-                    val currentPageTop = PaginationConstants.getPageTopPosition(currentPage, pageHeight)
-                    delta = currentPageTop - scroll
-                }
-            }
+        // Basic boundary check - can't scroll above the top
+        if (scroll + delta < 0) {
+            delta = -scroll
         }
 
+        // Apply scroll without additional constraints
         scroll += delta
 
         // scroll bitmap
         val tmp = windowedBitmap.copy(windowedBitmap.config!!, false)
 
         if (usePagination) {
-            // Clear the canvas for redrawing with pagination
+            // For pagination, redraw the entire view
             windowedCanvas.drawColor(Color.WHITE)
             drawArea(Rect(0, 0, windowedCanvas.width, windowedCanvas.height))
         } else {
@@ -527,6 +520,8 @@ class PageView(
 
             if (isPaginationEnabled) {
                 pageHeight = PaginationConstants.calculatePageHeight(viewWidth)
+                // Recalculate height based on pagination
+                computeHeight()
             }
 
             // Redraw the page with new pagination setting
