@@ -57,7 +57,6 @@ fun EditorView(
         val height = convertDpToPixel(this.maxHeight, context).toInt()
         val width = convertDpToPixel(this.maxWidth, context).toInt()
 
-
         val page = remember {
             PageView(
                 context = context,
@@ -68,6 +67,7 @@ fun EditorView(
                 viewHeight = height
             )
         }
+
         // Dynamically update the page width when the Box constraints change
         LaunchedEffect(width, height) {
             if (page.width != width || page.viewHeight != height) {
@@ -92,6 +92,13 @@ fun EditorView(
         LaunchedEffect(Unit) {
             if (_bookId != null) {
                 appRepository.bookRepository.setOpenPageId(_bookId, _pageId)
+
+                // Check for notebook pagination settings
+                val notebook = appRepository.bookRepository.getById(_bookId)
+                if (notebook != null && page.usePagination != notebook.usePagination) {
+                    // Update pagination setting if it has changed
+                    page.updatePagination(notebook.usePagination)
+                }
             }
         }
 
@@ -139,8 +146,6 @@ fun EditorView(
             }
         }
 
-
-
         InkaTheme {
             EditorSurface(
                 state = editorState, page = page, history = history
@@ -161,9 +166,6 @@ fun EditorView(
             Toolbar(
                 navController = navController, state = editorState
             )
-
         }
     }
 }
-
-

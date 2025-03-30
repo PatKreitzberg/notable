@@ -38,3 +38,4 @@ val MIGRATION_29_30 = object : Migration(29, 30) {
         database.execSQL("ALTER TABLE Image ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
     }
 }
+

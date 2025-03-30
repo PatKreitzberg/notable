@@ -36,6 +36,10 @@ data class Notebook(
     @ColumnInfo(defaultValue = "blank")
     val defaultNativeTemplate: String = "blank",
 
+    // New pagination setting
+    @ColumnInfo(defaultValue = "false")
+    val usePagination: Boolean = false,
+
     val createdAt: Date = Date(),
     val updatedAt: Date = Date()
 )
@@ -151,5 +155,4 @@ class BookRepository(context: Context) {
     fun delete(id: String) {
         db.delete(id)
     }
-
 }

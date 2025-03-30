@@ -41,7 +41,7 @@ class Converters {
 
 @Database(
     entities = [Folder::class, Notebook::class, Page::class, Stroke::class, Image::class, Kv::class],
-    version = 30,
+    version = 31,
     autoMigrations = [
         AutoMigration(19, 20),
         AutoMigration(20, 21),
@@ -53,6 +53,7 @@ class Converters {
         AutoMigration(27, 28),
         AutoMigration(28, 29),
         AutoMigration(29, 30),
+        AutoMigration(30, 31),
     ], exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -97,9 +98,14 @@ abstract class AppDatabase : RoomDatabase() {
                     INSTANCE =
                         Room.databaseBuilder(context, AppDatabase::class.java, dbFile.absolutePath)
                             .allowMainThreadQueries() // Avoid in production
-                            .addMigrations(MIGRATION_16_17, MIGRATION_17_18, MIGRATION_22_23)
+                            .addMigrations(
+                                MIGRATION_16_17,
+                                MIGRATION_17_18,
+                                MIGRATION_22_23,
+                                MIGRATION_29_30
+                                //MIGRATION_30_31
+                            )
                             .build()
-
                 }
             }
             return INSTANCE!!

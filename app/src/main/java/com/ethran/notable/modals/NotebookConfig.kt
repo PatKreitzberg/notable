@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.Switch
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -70,6 +72,11 @@ fun NotebookConfigDialog(bookId: String, onClose: () -> Unit) {
     var bookTitle by remember {
         mutableStateOf(book!!.title)
     }
+
+    var usePagination by remember {
+        mutableStateOf(book!!.usePagination)
+    }
+
     val formattedCreatedAt =
         remember { android.text.format.DateFormat.format("dd MMM yyyy HH:mm", book!!.createdAt) }
     val formattedUpdatedAt =
@@ -213,8 +220,23 @@ fun NotebookConfigDialog(bookId: String, onClose: () -> Unit) {
                             // this once thrown null ptr exception, when deleting notebook.
                             value = book!!.defaultNativeTemplate
                         )
-
                     }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "Use Pagination (Letter 11x8.5)")
+                        Spacer(Modifier.width(10.dp))
+                        Switch(
+                            checked = usePagination,
+                            onCheckedChange = { isChecked ->
+                                usePagination = isChecked
+                                val updatedBook = book!!.copy(usePagination = isChecked)
+                                bookRepository.update(updatedBook)
+                            }
+                        )
+                    }
+
                     Text("Pages: ${book!!.pageIds.size}")
                     Text("Size: TODO!")
                     Row {

@@ -387,7 +387,6 @@ fun drawBg(canvas: Canvas, nativeTemplate: String, scroll: Int, scale: Float = 1
         )
     }
 }
-
 val selectPaint = Paint().apply {
     strokeWidth = 5f
     style = Paint.Style.STROKE

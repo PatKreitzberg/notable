@@ -23,6 +23,7 @@ import com.ethran.notable.db.Page
 import com.ethran.notable.db.Stroke
 import com.ethran.notable.utils.imageBounds
 import com.ethran.notable.modals.AppSettings
+import com.ethran.notable.utils.PaginationConstants
 import com.ethran.notable.utils.strokeBounds
 import com.ethran.notable.utils.drawBg
 import com.ethran.notable.utils.drawImage
@@ -61,7 +62,14 @@ class PageView(
 
     var height by mutableIntStateOf(viewHeight) // is observed by ui
 
+    // Pagination related properties
+    var usePagination: Boolean = false
+    var pageHeight: Int = 0
+
     var pageFromDb = AppRepository(context).pageRepository.getById(id)
+    private var notebookInfo = if (pageFromDb?.notebookId != null)
+        AppRepository(context).bookRepository.getById(pageFromDb?.notebookId!!)
+    else null
 
     private var dbStrokes = AppDatabase.getDatabase(context).strokeDao()
     private var dbImages = AppDatabase.getDatabase(context).ImageDao()
@@ -76,6 +84,15 @@ class PageView(
         }
 
         windowedCanvas.drawColor(Color.WHITE)
+
+        // Initialize pagination setting from notebook
+        usePagination = notebookInfo?.usePagination ?: false
+        pageHeight = if (usePagination) {
+            PaginationConstants.calculatePageHeight(width)
+        } else {
+            0 // Not used when pagination is off
+        }
+
         drawBg(windowedCanvas, pageFromDb?.nativeTemplate!!, scroll)
 
         val isCached = loadBitmap()
@@ -161,7 +178,7 @@ class PageView(
 
     fun addImage(imageToAdd: Image) {
         images += listOf(imageToAdd)
-        val bottomPlusPadding = imageToAdd.x + imageToAdd.height + 50
+        val bottomPlusPadding = imageToAdd.y + imageToAdd.height + 50
         if (bottomPlusPadding > height) height = bottomPlusPadding
 
         saveImagesToPersistLayer(listOf(imageToAdd))
@@ -173,7 +190,7 @@ class PageView(
     fun addImage(imageToAdd: List<Image>) {
         images += imageToAdd
         imageToAdd.forEach {
-            val bottomPlusPadding = it.x + it.height + 50
+            val bottomPlusPadding = it.y + it.height + 50
             if (bottomPlusPadding > height) height = bottomPlusPadding
         }
         saveImagesToPersistLayer(imageToAdd)
@@ -201,12 +218,16 @@ class PageView(
 
 
     private fun computeHeight() {
-        if (strokes.isEmpty()) {
+        if (strokes.isEmpty() && images.isEmpty()) {
             height = viewHeight
             return
         }
-        val maxStrokeBottom = strokes.maxOf { it.bottom }.plus(50)
-        height = max(maxStrokeBottom.toInt(), viewHeight)
+
+        val maxStrokeBottom = if (strokes.isNotEmpty()) strokes.maxOf { it.bottom } else 0f
+        val maxImageBottom = if (images.isNotEmpty()) images.maxOf { it.y + it.height } else 0
+        val maxContentBottom = max(maxStrokeBottom.toInt(), maxImageBottom) + 50
+
+        height = max(maxContentBottom, viewHeight)
     }
 
     fun computeWidth(): Int {
@@ -286,13 +307,18 @@ class PageView(
         activeCanvas.clipRect(area)
         activeCanvas.drawColor(Color.BLACK)
 
-
         val timeToDraw = measureTimeMillis {
-            drawBg(activeCanvas, pageFromDb?.nativeTemplate ?: "blank", scroll)
+            // Draw the background for each visible page section
+            if (usePagination) {
+                drawPaginatedBackground(activeCanvas, pageArea)
+            } else {
+                drawBg(activeCanvas, pageFromDb?.nativeTemplate ?: "blank", scroll)
+            }
+
             val appSettings = KvProxy(context).get("APP_SETTINGS", AppSettings.serializer())
 
             if (appSettings?.debugMode == true) {
-//              Draw the gray edge of the rectangle
+                // Draw the gray edge of the rectangle
                 val redPaint = Paint().apply {
                     color = Color.GRAY
                     style = Paint.Style.STROKE
@@ -300,6 +326,7 @@ class PageView(
                 }
                 activeCanvas.drawRect(area, redPaint)
             }
+
             // Trying to find what throws error when drawing quickly
             try {
                 images.forEach { image ->
@@ -309,7 +336,6 @@ class PageView(
                     // if stroke is not inside page section
                     if (!bounds.toRect().intersect(pageArea)) return@forEach
                     drawImage(context, activeCanvas, image, IntOffset(0, -scroll))
-
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "PageView.kt: Drawing images failed: ${e.message}", e)
@@ -328,6 +354,7 @@ class PageView(
                     )
                 }
             }
+
             try {
                 strokes.forEach { stroke ->
                     if (ignoredStrokeIds.contains(stroke.id)) return@forEach
@@ -350,36 +377,117 @@ class PageView(
                     )
                 }
             }
-
         }
-//        Log.i(TAG, "Drew area in ${timeToDraw}ms")
+        //Log.i(TAG, "Drew area in ${timeToDraw}ms")
         activeCanvas.restore()
+    }
+
+    // Draw background for paginated view
+    private fun drawPaginatedBackground(canvas: Canvas, visibleArea: Rect) {
+        if (!usePagination) {
+            drawBg(canvas, pageFromDb?.nativeTemplate ?: "blank", scroll)
+            return
+        }
+
+        // Calculate which pages are visible in the current viewport
+        val startPageNumber = PaginationConstants.getPageNumberForPosition(visibleArea.top, pageHeight)
+        val endPageNumber = PaginationConstants.getPageNumberForPosition(visibleArea.bottom, pageHeight)
+
+        // Draw each visible page with gap between them
+        for (pageNumber in startPageNumber..endPageNumber) {
+            val pageTop = PaginationConstants.getPageTopPosition(pageNumber, pageHeight)
+            val pageBottom = pageTop + pageHeight
+
+            // Define the area for this page
+            val pageRect = Rect(0, pageTop - scroll, canvas.width, pageBottom - scroll)
+
+            // Only draw if page is visible in current view
+            if (pageRect.bottom > 0 && pageRect.top < canvas.height) {
+                canvas.save()
+                canvas.clipRect(pageRect)
+
+                // Draw the page background
+                drawBg(canvas, pageFromDb?.nativeTemplate ?: "blank", scroll)
+
+                // Draw a border around the page
+                val borderPaint = Paint().apply {
+                    color = Color.LTGRAY
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2f
+                }
+                canvas.drawRect(pageRect, borderPaint)
+
+                canvas.restore()
+            }
+
+            // Draw gap between pages if not the last page
+            if (pageNumber < endPageNumber) {
+                val gapTop = pageBottom - scroll
+                val gapBottom = gapTop + PaginationConstants.PAGE_GAP
+                val gapRect = Rect(0, gapTop, canvas.width, gapBottom)
+
+                if (gapRect.bottom > 0 && gapRect.top < canvas.height) {
+                    canvas.save()
+                    canvas.clipRect(gapRect)
+                    canvas.drawColor(Color.LTGRAY)
+                    canvas.restore()
+                }
+            }
+        }
     }
 
     fun updateScroll(_delta: Int) {
         var delta = _delta
         if (scroll + delta < 0) delta = 0 - scroll
 
+        // Snap to page boundaries if pagination is enabled
+        if (usePagination && delta != 0) {
+            val currentPage = PaginationConstants.getPageNumberForPosition(scroll, pageHeight)
+            val newScroll = scroll + delta
+            val newPage = PaginationConstants.getPageNumberForPosition(newScroll, pageHeight)
+
+            // If crossing a page boundary, snap to it
+            if (currentPage != newPage) {
+                // Determine if scrolling up or down
+                if (delta > 0) { // Scrolling down
+                    // Snap to the top of the next page
+                    val nextPageTop = PaginationConstants.getPageTopPosition(currentPage + 1, pageHeight)
+                    delta = nextPageTop - scroll
+                } else { // Scrolling up
+                    // Snap to the top of the current page
+                    val currentPageTop = PaginationConstants.getPageTopPosition(currentPage, pageHeight)
+                    delta = currentPageTop - scroll
+                }
+            }
+        }
+
         scroll += delta
 
         // scroll bitmap
         val tmp = windowedBitmap.copy(windowedBitmap.config!!, false)
-        drawBg(windowedCanvas, pageFromDb?.nativeTemplate ?: "blank", scroll)
 
-        windowedCanvas.drawBitmap(tmp, 0f, -delta.toFloat(), Paint())
-        tmp.recycle()
+        if (usePagination) {
+            // Clear the canvas for redrawing with pagination
+            windowedCanvas.drawColor(Color.WHITE)
+            drawArea(Rect(0, 0, windowedCanvas.width, windowedCanvas.height))
+        } else {
+            // Standard background drawing
+            drawBg(windowedCanvas, pageFromDb?.nativeTemplate ?: "blank", scroll)
+            windowedCanvas.drawBitmap(tmp, 0f, -delta.toFloat(), Paint())
+            tmp.recycle()
 
-        // where is the new rendering area starting ?
-        val canvasOffset = if (delta > 0) windowedCanvas.height - delta else 0
+            // where is the new rendering area starting?
+            val canvasOffset = if (delta > 0) windowedCanvas.height - delta else 0
 
-        drawArea(
-            area = Rect(
-                0,
-                canvasOffset,
-                windowedCanvas.width,
-                canvasOffset + abs(delta)
-            ),
-        )
+            drawArea(
+                area = Rect(
+                    0,
+                    canvasOffset,
+                    windowedCanvas.width,
+                    canvasOffset + abs(delta)
+                ),
+            )
+        }
 
         persistBitmapDebounced()
         saveToPersistLayer()
@@ -399,10 +507,31 @@ class PageView(
             viewWidth = newWidth
             viewHeight = newHeight
 
+            // Update pagination page height if enabled
+            if (usePagination) {
+                pageHeight = PaginationConstants.calculatePageHeight(newWidth)
+            }
+
             // Recreate bitmap and canvas with new dimensions
             windowedBitmap = Bitmap.createBitmap(viewWidth, viewHeight, Bitmap.Config.ARGB_8888)
             windowedCanvas = Canvas(windowedBitmap)
             drawArea(Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT))
+            persistBitmapDebounced()
+        }
+    }
+
+    // Update pagination setting
+    fun updatePagination(isPaginationEnabled: Boolean) {
+        if (usePagination != isPaginationEnabled) {
+            usePagination = isPaginationEnabled
+
+            if (isPaginationEnabled) {
+                pageHeight = PaginationConstants.calculatePageHeight(viewWidth)
+            }
+
+            // Redraw the page with new pagination setting
+            windowedCanvas.drawColor(Color.WHITE)
+            drawArea(Rect(0, 0, windowedCanvas.width, windowedCanvas.height))
             persistBitmapDebounced()
         }
     }
@@ -420,4 +549,3 @@ class PageView(
         }
     }
 }
-
