@@ -1,5 +1,10 @@
 package com.ethran.notable.components
 
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import com.ethran.notable.modals.GoogleDriveBackupDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -48,6 +53,8 @@ fun ToolbarMenu(
     onClose: () -> Unit,
     onPageSettingsOpen: () -> Unit
 ) {
+    var showGoogleDriveBackupDialog by remember { mutableStateOf(false) }
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackManager = LocalSnackContext.current
@@ -267,6 +274,20 @@ fun ToolbarMenu(
                         }
                 ) { Text("Export book to xopp") }
             }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(Color.Black)
+            )
+
+            Box(
+                Modifier
+                    .padding(10.dp)
+                    .noRippleClickable {
+                        showGoogleDriveBackupDialog = true
+                    }
+            ) { Text("Google Drive Backup") }
 
             Box(
                 Modifier
@@ -292,6 +313,11 @@ fun ToolbarMenu(
             Box(Modifier.padding(10.dp)) {
                 Text("Refresh page")
             }*/
+        }
+        if (showGoogleDriveBackupDialog) {
+            GoogleDriveBackupDialog(onClose = {
+                showGoogleDriveBackupDialog = false
+            })
         }
     }
 }

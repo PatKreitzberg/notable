@@ -1,5 +1,7 @@
 package com.ethran.notable.views
 
+import com.ethran.notable.modals.GoogleDriveBackupDialog
+import compose.icons.feathericons.Cloud
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -84,6 +86,7 @@ import kotlin.concurrent.thread
 @Composable
 fun Library(navController: NavController, folderId: String? = null) {
     val context = LocalContext.current
+    var showGoogleDriveBackupDialog by remember { mutableStateOf(false) }
 
     var isSettingsOpen by remember {
         mutableStateOf(false)
@@ -118,6 +121,15 @@ fun Library(navController: NavController, folderId: String? = null) {
         Topbar {
             Row(Modifier.fillMaxWidth()) {
                 Spacer(modifier = Modifier.weight(1f))
+                Icon(
+                    imageVector = FeatherIcons.Cloud,
+                    contentDescription = "Google Drive Backup",
+                    Modifier
+                        .padding(8.dp)
+                        .noRippleClickable {
+                            showGoogleDriveBackupDialog = true
+                        }
+                )
                 BadgedBox(
                     badge = {
                         if (!isLatestVersion) Badge(
@@ -454,7 +466,7 @@ fun Library(navController: NavController, folderId: String? = null) {
 
     if (isSettingsOpen) AppSettingsModal(onClose = { isSettingsOpen = false })
 
-// Add the FloatingEditorView here
+    // Add the FloatingEditorView here
     if (showFloatingEditor && floatingEditorPageId != null) {
         FloatingEditorView(
             navController = navController,
@@ -464,6 +476,11 @@ fun Library(navController: NavController, folderId: String? = null) {
                 floatingEditorPageId = null
             }
         )
+    }
+    if (showGoogleDriveBackupDialog) {
+        GoogleDriveBackupDialog(onClose = {
+            showGoogleDriveBackupDialog = false
+        })
     }
 }
 

@@ -66,6 +66,20 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun ImageDao(): ImageDao
 
     companion object {
+
+        /**
+         * Close the database connection
+         * Used when we need to replace the database file during restore
+         */
+        fun closeConnection() {
+            if (INSTANCE != null) {
+                synchronized(this) {
+                    INSTANCE?.close()
+                    INSTANCE = null
+                }
+            }
+        }
+
         private var INSTANCE: AppDatabase? = null
 
         fun getDatabase(context: Context): AppDatabase {

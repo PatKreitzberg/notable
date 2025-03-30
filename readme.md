@@ -36,7 +36,7 @@
 This repository, maintained by **Ethran**, is a personal project based on the original [olup/notable](https://github.com/olup/notable) repository, which has since been archived. This fork focuses on maintaining and improving the project with ongoing updates and enhancements, mainly tailored to my specific needs and preferences.
 
 ### What's New in This Fork?
-- Semi-active development with regular updates.
+- Semi-active development with regular updates.e
 - Personal features and optimizations that make the app more functional for my use.
 - Pre-release builds with experimental features and enhancements.
 

@@ -11,6 +11,17 @@ plugins {
 }
 
 android {
+    packagingOptions {
+        exclude("META-INF/DEPENDENCIES")
+        exclude("META-INF/LICENSE")
+        exclude("META-INF/LICENSE.txt")
+        exclude("META-INF/license.txt")
+        exclude("META-INF/NOTICE")
+        exclude("META-INF/NOTICE.txt")
+        exclude("META-INF/notice.txt")
+        exclude("META-INF/ASL2.0")
+        exclude("META-INF/*.kotlin_module")
+    }
     compileSdk 35
 
     defaultConfig {
@@ -182,6 +193,12 @@ dependencies {
     // For xopp file format
     implementation("org.apache.commons:commons-compress:1.27.1") // GZip support
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0"
+
+    // Google Drive API
+    implementation 'com.google.android.gms:play-services-auth:20.7.0'
+    implementation 'com.google.api-client:google-api-client-android:2.2.0'
+    implementation 'com.google.apis:google-api-services-drive:v3-rev20231128-2.0.0'
+    implementation 'com.google.http-client:google-http-client-gson:1.43.3'
 }
 
 tasks.register('printVersionName') {
