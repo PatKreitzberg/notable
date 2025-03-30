@@ -49,6 +49,7 @@ import kotlin.concurrent.thread
 var NeoTools: Boolean = false
 
 // Define the target page size (A4 in points: 595 x 842)
+// This is if your device is 72 DPI
 val A4_WIDTH = 595
 val A4_HEIGHT = 842
 
