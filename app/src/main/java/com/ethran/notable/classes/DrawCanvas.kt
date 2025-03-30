@@ -27,6 +27,7 @@ import com.ethran.notable.utils.Eraser
 import com.ethran.notable.utils.History
 import com.ethran.notable.utils.Mode
 import com.ethran.notable.utils.Operation
+import com.ethran.notable.utils.PaginationConstants
 import com.ethran.notable.utils.Pen
 import com.ethran.notable.utils.PlacementMode
 import com.ethran.notable.utils.SimplePointF
@@ -76,6 +77,8 @@ class DrawCanvas(
     private val strokeHistoryBatch = mutableListOf<String>()
 //    private val commitHistorySignal = MutableSharedFlow<Unit>()
 
+    // List of rects that define the drawable areas (for pagination)
+    private var drawableRects = mutableListOf<Rect>()
 
     companion object {
         var forceUpdate = MutableSharedFlow<Rect?>()
@@ -115,7 +118,27 @@ class DrawCanvas(
         override fun onRawDrawingTouchPointListReceived(plist: TouchPointList) {
             val startTime = System.currentTimeMillis()
             Log.d(TAG, "onRawDrawingTouchPointListReceived started")
-            // sometimes UI will get refreshed and frozen before we draw all the strokes.
+
+            // Check if any point is in a non-drawable area (gap between pages)
+            if (page.usePagination) {
+                val pageHeight = page.pageHeight
+                val pageGap = PaginationConstants.PAGE_GAP
+
+                // Check each touch point to see if it falls in a gap
+                for (point in plist.points) {
+                    val y = point.y + page.scroll
+                    val page_num = y / (pageHeight + pageGap)
+                    val page_relative_y = y - page_num * (pageHeight + pageGap)
+
+                    // If the point is in a gap between pages, ignore the entire stroke
+                    if (page_relative_y > pageHeight) {
+                        // Point is in a gap - ignore this entire stroke
+                        return
+                    }
+                }
+            }
+
+            // Sometimes UI will get refreshed and frozen before we draw all the strokes.
             // I think, its because of doing it in separate thread. Commented it for now, to
             // observe app behavior, and determine if it fixed this bug,
             // as I do not know reliable way to reproduce it
@@ -186,20 +209,41 @@ class DrawCanvas(
                 }
 
                 if (getActualState().mode == Mode.Line) {
-                    // draw line
-                    handleLine(
-                        page = this@DrawCanvas.page,
-                        historyBucket = strokeHistoryBatch,
-                        strokeSize = getActualState().penSettings[getActualState().pen.penName]!!.strokeSize,
-                        color = getActualState().penSettings[getActualState().pen.penName]!!.color,
-                        pen = getActualState().pen,
-                        touchPoints = plist.points
-                    )
-                    //make it visible
-                    drawCanvasToView()
-                    refreshUi()
-                }
+                    // Check if line would cross a gap between pages
+                    val shouldDrawLine = if (page.usePagination) {
+                        val firstPoint = plist.points.first()
+                        val lastPoint = plist.points.last()
 
+                        // Convert to page-relative coordinates
+                        val firstY = firstPoint.y + page.scroll
+                        val lastY = lastPoint.y + page.scroll
+
+                        // Calculate which pages these points are on
+                        val firstPage = (firstY / (page.pageHeight + PaginationConstants.PAGE_GAP)).toInt()
+                        val lastPage = (lastY / (page.pageHeight + PaginationConstants.PAGE_GAP)).toInt()
+
+                        // Only allow lines within the same page
+                        firstPage == lastPage
+                    } else {
+                        // Always allow lines when pagination is off
+                        true
+                    }
+
+                    if (shouldDrawLine) {
+                        // draw line
+                        handleLine(
+                            page = this@DrawCanvas.page,
+                            historyBucket = strokeHistoryBatch,
+                            strokeSize = getActualState().penSettings[getActualState().pen.penName]!!.strokeSize,
+                            color = getActualState().penSettings[getActualState().pen.penName]!!.color,
+                            pen = getActualState().pen,
+                            touchPoints = plist.points
+                        )
+                        //make it visible
+                        drawCanvasToView()
+                        refreshUi()
+                    }
+                }
             }
         }
 
@@ -390,6 +434,25 @@ class DrawCanvas(
             }
         }
 
+        // observe pagination
+        coroutineScope.launch {
+            snapshotFlow { page.usePagination }.collect {
+                Log.v(TAG + "Observer", "pagination change: ${page.usePagination}")
+                updateActiveSurface() // Update drawable areas when pagination changes
+                refreshUiSuspend()
+            }
+        }
+
+        // Observe scroll changes to update the drawable areas
+        coroutineScope.launch {
+            snapshotFlow { page.scroll }.collect {
+                Log.v(TAG + "Observer", "scroll change: ${page.scroll}")
+                if (page.usePagination) {
+                    updateActiveSurface() // Update drawable areas when scroll changes
+                }
+            }
+        }
+
         coroutineScope.launch {
             //After 500ms add to history strokes
             commitHistorySignal.debounce(500).collect {
@@ -519,7 +582,26 @@ class DrawCanvas(
 
             // Calculate the center position for the image relative to the page dimensions
             val centerX = (page.viewWidth - imageWidth) / 2
-            val centerY = (page.viewHeight - imageHeight) / 2 + page.scroll
+            var centerY = (page.viewHeight - imageHeight) / 2 + page.scroll
+
+            // If pagination is enabled, make sure the image is placed on a valid page area
+            if (page.usePagination) {
+                val pageHeight = page.pageHeight
+                val pageGap = PaginationConstants.PAGE_GAP
+
+                // Calculate which page this Y position falls on
+                val pageNum = centerY / (pageHeight + pageGap)
+
+                // Calculate Y position relative to the start of this page
+                val pageRelativeY = centerY - pageNum * (pageHeight + pageGap)
+
+                // If the image would overlap a gap, adjust its position to be fully on a page
+                if (pageRelativeY + imageHeight > pageHeight) {
+                    // Place at the next page's top if image would cross a gap
+                    centerY = (pageNum + 1) * (pageHeight + pageGap) + (pageHeight - imageHeight) / 2
+                }
+            }
+
             val imageToSave = Image(
                 x = centerX,
                 y = centerY,
@@ -609,14 +691,28 @@ class DrawCanvas(
         touchHelper.setRawDrawingEnabled(false)
         touchHelper.closeRawDrawing()
 
-        touchHelper.setLimitRect(
-            mutableListOf(
-                Rect(
-                    0, 0, this.width, this.height
+        // Update drawable areas for pagination
+        updateDrawableAreas(exclusionHeight)
+
+        // Set exclude rect for toolbar
+        val toolbarExcludeRect = Rect(0, 0, this.width, exclusionHeight)
+
+        if (page.usePagination) {
+            // For pagination, set each page as a separate limit rect
+            touchHelper.setLimitRect(drawableRects)
+                .setExcludeRect(listOf(toolbarExcludeRect))
+                .openRawDrawing()
+        } else {
+            // For non-pagination, use the whole area
+            touchHelper.setLimitRect(
+                mutableListOf(
+                    Rect(
+                        0, 0, this.width, this.height
+                    )
                 )
-            )
-        ).setExcludeRect(listOf(Rect(0, 0, this.width, exclusionHeight)))
-            .openRawDrawing()
+            ).setExcludeRect(listOf(toolbarExcludeRect))
+                .openRawDrawing()
+        }
 
         touchHelper.setRawDrawingEnabled(true)
         updatePenAndStroke()
@@ -624,4 +720,51 @@ class DrawCanvas(
         refreshUi()
     }
 
+    // Update drawable areas based on pagination settings AND current scroll position
+    private fun updateDrawableAreas(exclusionHeight: Int) {
+        drawableRects.clear()
+
+        if (page.usePagination) {
+            val pageHeight = page.pageHeight
+            val pageGap = PaginationConstants.PAGE_GAP
+            val scroll = page.scroll
+            val visibleHeight = this.height
+
+            // Calculate which pages are in view considering the current scroll position
+            val firstVisiblePage = (scroll / (pageHeight + pageGap)).toInt()
+            val lastVisiblePage = ((scroll + visibleHeight) / (pageHeight + pageGap)).toInt() + 1
+
+            // Create a limit rect for each visible page
+            for (pageNum in firstVisiblePage..lastVisiblePage) {
+                // Calculate page top and bottom in screen coordinates (accounting for scroll)
+                val pageTopInDoc = pageNum * (pageHeight + pageGap)
+                val pageBottomInDoc = pageTopInDoc + pageHeight
+
+                // Convert to screen coordinates
+                val pageTopOnScreen = pageTopInDoc - scroll
+                val pageBottomOnScreen = pageBottomInDoc - scroll
+
+                // Only include if the page is visible (not completely off-screen)
+                if (pageBottomOnScreen > 0 && pageTopOnScreen < visibleHeight) {
+                    // Adjust for toolbar and screen bounds
+                    val adjustedTop = maxOf(pageTopOnScreen, exclusionHeight)
+                    val adjustedBottom = minOf(pageBottomOnScreen, visibleHeight)
+
+                    // Only add if there's actually drawable area (not just toolbar)
+                    if (adjustedBottom > adjustedTop) {
+                        drawableRects.add(Rect(0, adjustedTop, this.width, adjustedBottom))
+                    }
+                }
+            }
+
+            // If no drawable areas were created (edge case), create a default one
+            if (drawableRects.isEmpty()) {
+                drawableRects.add(Rect(0, exclusionHeight, this.width, this.height))
+                Log.w(TAG, "No drawable areas found, using default")
+            }
+        } else {
+            // Without pagination, just one drawable area for the whole surface
+            drawableRects.add(Rect(0, exclusionHeight, this.width, this.height))
+        }
+    }
 }
