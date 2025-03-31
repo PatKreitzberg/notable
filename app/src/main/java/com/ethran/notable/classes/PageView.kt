@@ -1,6 +1,5 @@
 package com.ethran.notable.classes
 
-
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -23,6 +22,8 @@ import com.ethran.notable.db.Page
 import com.ethran.notable.db.Stroke
 import com.ethran.notable.utils.imageBounds
 import com.ethran.notable.modals.AppSettings
+import com.ethran.notable.modals.DEFAULT_PPI
+import com.ethran.notable.modals.PaperFormat
 import com.ethran.notable.utils.PaginationConstants
 import com.ethran.notable.utils.strokeBounds
 import com.ethran.notable.utils.drawBg
@@ -86,10 +87,18 @@ class PageView(
 
         windowedCanvas.drawColor(Color.WHITE)
 
+        // Get global app settings for device PPI
+        val appSettings = AppRepository(context).kvProxy.get("APP_SETTINGS", AppSettings.serializer())
+        val devicePpi = appSettings?.devicePpi ?: DEFAULT_PPI
+
         // Initialize pagination setting from notebook
         usePagination = notebookInfo?.usePagination ?: false
+
+        // Get paper format from the notebook or use default
+        val paperFormat = notebookInfo?.paperFormat ?: PaperFormat.A4
+
         pageHeight = if (usePagination) {
-            PaginationConstants.calculatePageHeight(width)
+            PaginationConstants.calculatePageHeight(width, paperFormat)
         } else {
             0 // Not used when pagination is off
         }
@@ -99,6 +108,7 @@ class PageView(
         val isCached = loadBitmap()
         initFromPersistLayer(isCached)
     }
+
 
     private fun indexStrokes() {
         coroutineScope.launch {
@@ -229,7 +239,7 @@ class PageView(
         val maxContentBottom = max(maxStrokeBottom.toInt(), maxImageBottom) + 50
 
         if (usePagination) {
-            // For pagination, calculate height based on the number of pages needed
+            // For paginated notebook, calculate height based on the number of pages needed
             // to fit all content plus gaps between pages
             val contentPages = PaginationConstants.getPageNumberForPosition(maxContentBottom, pageHeight) + 1
             height = contentPages * (pageHeight + PaginationConstants.PAGE_GAP)
@@ -238,6 +248,7 @@ class PageView(
             height = max(maxContentBottom, viewHeight)
         }
     }
+
 
     fun computeWidth(): Int {
         if (strokes.isEmpty()) {
@@ -502,7 +513,15 @@ class PageView(
 
             // Update pagination page height if enabled
             if (usePagination) {
-                pageHeight = PaginationConstants.calculatePageHeight(newWidth)
+                // Get the notebook to get the paper format
+                val notebook = if (pageFromDb?.notebookId != null) {
+                    AppRepository(context).bookRepository.getById(pageFromDb?.notebookId!!)
+                } else null
+
+                // Get the paper format from the notebook or use default
+                val paperFormat = notebook?.paperFormat ?: PaperFormat.A4
+
+                pageHeight = PaginationConstants.calculatePageHeight(newWidth, paperFormat)
             }
 
             // Recreate bitmap and canvas with new dimensions
@@ -513,13 +532,20 @@ class PageView(
         }
     }
 
-    // Update pagination setting
     fun updatePagination(isPaginationEnabled: Boolean) {
         if (usePagination != isPaginationEnabled) {
             usePagination = isPaginationEnabled
 
             if (isPaginationEnabled) {
-                pageHeight = PaginationConstants.calculatePageHeight(viewWidth)
+                // Get the notebook to get the paper format
+                val notebook = if (pageFromDb?.notebookId != null) {
+                    AppRepository(context).bookRepository.getById(pageFromDb?.notebookId!!)
+                } else null
+
+                // Get the paper format from the notebook or use default
+                val paperFormat = notebook?.paperFormat ?: PaperFormat.A4
+
+                pageHeight = PaginationConstants.calculatePageHeight(viewWidth, paperFormat)
                 // Recalculate height based on pagination
                 computeHeight()
             }
@@ -530,6 +556,7 @@ class PageView(
             persistBitmapDebounced()
         }
     }
+
 
     private fun persistBitmapDebounced() {
         coroutineScope.launch {

@@ -18,12 +18,15 @@ import com.ethran.notable.SCREEN_WIDTH
 import com.ethran.notable.TAG
 import com.ethran.notable.db.AppDatabase
 import com.ethran.notable.db.BookRepository
+import com.ethran.notable.db.KvProxy
 import com.ethran.notable.db.Notebook
 import com.ethran.notable.db.Page
 import com.ethran.notable.db.PageRepository
 import com.ethran.notable.db.Stroke
 import com.ethran.notable.db.StrokePoint
-import com.ethran.notable.modals.A4_WIDTH
+import com.ethran.notable.modals.DEFAULT_PPI
+import com.ethran.notable.modals.AppSettings
+import com.ethran.notable.modals.PaperFormat
 import com.ethran.notable.utils.Pen
 import com.onyx.android.sdk.api.device.epd.EpdController
 import io.shipbook.shipbooksdk.Log
@@ -50,10 +53,10 @@ import javax.xml.transform.stream.StreamResult
 
 
 object XoppFile {
-    private val scaleFactor = A4_WIDTH.toFloat() / SCREEN_WIDTH
+    // Get the pressure from the device
     private val maxPressure = EpdController.getMaxTouchPressure()
 
-    //I do not know what pressureFactor should be, I just guest it.
+    // Default pressure factor (may need adjustment)
     private val pressureFactor = maxPressure / 2
 
     /**
@@ -73,6 +76,17 @@ object XoppFile {
         val book = BookRepository(context).getById(bookId)
             ?: return Log.e(TAG, "Book ID($bookId) not found")
 
+        // Get app settings to determine device PPI
+        val appSettings = KvProxy(context).get("APP_SETTINGS", AppSettings.serializer())
+        val devicePpi = appSettings?.devicePpi ?: DEFAULT_PPI
+
+        // Get paper format from the book or use default
+        val paperFormat = book.paperFormat ?: PaperFormat.A4
+
+        // Calculate scale factor based on paper format and device PPI
+        val paperWidth = paperFormat.getWidthInPoints(devicePpi)
+        val scaleFactor = paperWidth.toFloat() / SCREEN_WIDTH
+
         val fileName = book.title
         val tempFile = File(context.cacheDir, "$fileName.xml")
 
@@ -86,7 +100,7 @@ object XoppFile {
             writer.write("<xournal creator=\"Notable ${BuildConfig.VERSION_NAME}\" version=\"0.4\">\n")
 
             book.pageIds.forEach { pageId ->
-                writePage(context, pageId, writer)
+                writePage(context, pageId, writer, scaleFactor, paperFormat, devicePpi)
             }
 
             writer.write("</xournal>\n")
@@ -99,6 +113,24 @@ object XoppFile {
      * Exports page as a `.xopp` file.
      */
     fun exportPage(context: Context, pageId: String) {
+        // Get app settings to determine device PPI
+        val appSettings = KvProxy(context).get("APP_SETTINGS", AppSettings.serializer())
+        val devicePpi = appSettings?.devicePpi ?: DEFAULT_PPI
+
+        // Determine paper format - try to get from notebook if page belongs to a notebook
+        val page = PageRepository(context).getById(pageId)
+        val notebookId = page?.notebookId
+        val paperFormat = if (notebookId != null) {
+            val notebook = BookRepository(context).getById(notebookId)
+            notebook?.paperFormat ?: PaperFormat.A4
+        } else {
+            PaperFormat.A4
+        }
+
+        // Calculate scale factor based on paper format and device PPI
+        val paperWidth = paperFormat.getWidthInPoints(devicePpi)
+        val scaleFactor = paperWidth.toFloat() / SCREEN_WIDTH
+
         val tempFile = File(context.cacheDir, "exported_page.xml")
 
         BufferedWriter(
@@ -109,7 +141,7 @@ object XoppFile {
         ).use { writer ->
             writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
             writer.write("<xournal creator=\"Notable ${BuildConfig.VERSION_NAME}\" version=\"0.4\">\n")
-            writePage(context, pageId, writer)
+            writePage(context, pageId, writer, scaleFactor, paperFormat, devicePpi)
             writer.write("</xournal>\n")
         }
 
@@ -126,8 +158,12 @@ object XoppFile {
      * @param context The application context.
      * @param pageId The ID of the page to process.
      * @param writer The BufferedWriter to write XML data to.
+     * @param scaleFactor The scale factor to apply to coordinates.
+     * @param paperFormat The paper format being used.
+     * @param devicePpi The device PPI setting.
      */
-    private fun writePage(context: Context, pageId: String, writer: BufferedWriter) {
+    private fun writePage(context: Context, pageId: String, writer: BufferedWriter,
+                          scaleFactor: Float, paperFormat: PaperFormat, devicePpi: Int) {
         val pages = PageRepository(context)
         val (_, strokes) = pages.getWithStrokeById(pageId)
         val (_, images) = pages.getWithImageById(pageId)
@@ -136,10 +172,18 @@ object XoppFile {
 
         val root = doc.createElement("page")
         val strokeHeight = if (strokes.isEmpty()) 0 else strokes.maxOf(Stroke::bottom).toInt() + 50
-        val height = strokeHeight.coerceAtLeast(SCREEN_HEIGHT) * scaleFactor
 
-        root.setAttribute("width", A4_WIDTH.toString())
+        // Calculate paper dimensions based on the paper format and device PPI
+        val paperWidth = paperFormat.getWidthInPoints(devicePpi)
+        val paperHeight = paperFormat.getHeightInPoints(devicePpi)
+
+        // Use actual paper width and height for export
+        root.setAttribute("width", paperWidth.toString())
+
+        // For height, either use the paper height or scale the content height if it's larger
+        val height = (strokeHeight * scaleFactor).coerceAtLeast(paperHeight.toFloat()).toInt()
         root.setAttribute("height", height.toString())
+
         doc.appendChild(root)
 
         val bcgElement = doc.createElement("background")
@@ -148,11 +192,8 @@ object XoppFile {
         bcgElement.setAttribute("style", "plain")
         root.appendChild(bcgElement)
 
-
         val layer = doc.createElement("layer")
         root.appendChild(layer)
-
-
 
         for (stroke in strokes) {
             val strokeElement = doc.createElement("stroke")
@@ -276,10 +317,16 @@ object XoppFile {
         val bookRepo = BookRepository(context)
         val pageRepo = PageRepository(context)
 
+        // Get app settings for device PPI
+        val appSettings = KvProxy(context).get("APP_SETTINGS", AppSettings.serializer())
+        val devicePpi = appSettings?.devicePpi ?: DEFAULT_PPI
+
         val book = Notebook(
             title = bookTitle,
             parentFolderId = parentFolderId,
-            defaultNativeTemplate = "blank"
+            defaultNativeTemplate = "blank",
+            // Use Letter format for imported books by default, can be changed later
+            paperFormat = PaperFormat.LETTER
         )
         bookRepo.createEmpty(book)
 
@@ -289,7 +336,7 @@ object XoppFile {
             val pageElement = pages.item(i) as Element
             val page = Page(notebookId = book.id, nativeTemplate = "blank")
             pageRepo.create(page)
-            parseStrokes(context, pageElement, page)
+            parseStrokes(context, pageElement, page, devicePpi)
             bookRepo.addPage(book.id, page.id)
 
 //            parseImages(pageElement, page, pageRepo, context)
@@ -327,12 +374,17 @@ object XoppFile {
 
     /**
      * Extracts strokes from a page element and saves them.
+     *
+     * @param devicePpi Device PPI for scaling during import
      */
-    private fun parseStrokes(context: Context, pageElement: Element, page: Page) {
+    private fun parseStrokes(context: Context, pageElement: Element, page: Page, devicePpi: Int) {
         val strokeRepo = AppDatabase.getDatabase(context).strokeDao()
         val strokeNodes = pageElement.getElementsByTagName("stroke")
         val strokes = mutableListOf<Stroke>()
 
+        // Get page width to calculate scale factor
+        val pageWidth = pageElement.getAttribute("width").toFloatOrNull() ?: 595f
+        val scaleFactor = SCREEN_WIDTH / pageWidth
 
         for (i in 0 until strokeNodes.length) {
             val strokeElement = strokeNodes.item(i) as Element
@@ -340,25 +392,18 @@ object XoppFile {
 
             if (pointsString.isBlank()) continue // Skip empty strokes
 
-            // Decode stroke attributes
-//            val strokeSize = strokeElement.getAttribute("width").toFloatOrNull()?.div(scaleFactor) ?: 1.0f
-            val color = parseColor(strokeElement.getAttribute("color"))
-
-
             // Decode width attribute
             val widthString = strokeElement.getAttribute("width").trim()
             val widthValues = widthString.split(" ").mapNotNull { it.toFloatOrNull() }
 
-            val strokeSize =
-                widthValues.firstOrNull()?.div(scaleFactor) ?: 1.0f // First value is stroke width
+            val strokeSize = widthValues.firstOrNull()?.times(scaleFactor) ?: 1.0f
             val pressureValues = widthValues.drop(1) // Remaining values are pressure
-
 
             val points = pointsString.split(" ").chunked(2).mapIndexedNotNull { index, chunk ->
                 try {
                     StrokePoint(
-                        x = chunk[0].toFloat() / scaleFactor,
-                        y = chunk[1].toFloat() / scaleFactor,
+                        x = chunk[0].toFloat() * scaleFactor,
+                        y = chunk[1].toFloat() * scaleFactor,
                         pressure = pressureValues.getOrNull(index - 1)?.times(pressureFactor)
                             ?: (maxPressure / 2),
                         size = strokeSize,
@@ -389,7 +434,7 @@ object XoppFile {
 
             val stroke = Stroke(
                 size = strokeSize,
-                pen = tool, // TODO: change this to proper pen
+                pen = tool,
                 pageId = page.id,
                 top = boundingBox.top,
                 bottom = boundingBox.bottom,
@@ -397,10 +442,10 @@ object XoppFile {
                 right = boundingBox.right,
                 points = decodedPoints,
                 color = android.graphics.Color.argb(
-                    (color.alpha * 255).toInt(),
-                    (color.red * 255).toInt(),
-                    (color.green * 255).toInt(),
-                    (color.blue * 255).toInt()
+                    (Color(parseColor(strokeElement.getAttribute("color"))).alpha * 255).toInt(),
+                    (Color(parseColor(strokeElement.getAttribute("color"))).red * 255).toInt(),
+                    (Color(parseColor(strokeElement.getAttribute("color"))).green * 255).toInt(),
+                    (Color(parseColor(strokeElement.getAttribute("color"))).blue * 255).toInt()
                 )
             )
             strokes.add(stroke)
@@ -440,24 +485,22 @@ object XoppFile {
     /**
      * Parses an Xournal++ color string to a Compose Color.
      */
-    private fun parseColor(colorString: String): Color {
+    private fun parseColor(colorString: String): Int {
         return when (colorString.lowercase()) {
-            "black" -> Color.Black
-            "blue" -> Color.Blue
-            "red" -> Color.Red
-            "green" -> Color.Green
-            "magenta" -> Color.Magenta
-            "yellow" -> Color.Yellow
+            "black" -> Color.Black.toArgb()
+            "blue" -> Color.Blue.toArgb()
+            "red" -> Color.Red.toArgb()
+            "green" -> Color.Green.toArgb()
+            "magenta" -> Color.Magenta.toArgb()
+            "yellow" -> Color.Yellow.toArgb()
             // Convert "#RRGGBBAA" → "#AARRGGBB" → Android Color
             else -> {
                 if (colorString.startsWith("#") && colorString.length == 9)
-                    Color(
-                        ("#" + colorString.substring(7, 9) +
-                                colorString.substring(1, 7)).toColorInt()
-                    )
+                    ("#" + colorString.substring(7, 9) +
+                            colorString.substring(1, 7)).toColorInt()
                 else {
                     Log.e(TAG, "Unknown color: $colorString")
-                    Color.Black
+                    Color.Black.toArgb()
                 }
             }
         }

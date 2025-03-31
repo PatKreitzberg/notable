@@ -13,17 +13,17 @@ import androidx.compose.ui.unit.IntOffset
 import com.ethran.notable.SCREEN_HEIGHT
 import com.ethran.notable.SCREEN_WIDTH
 import com.ethran.notable.TAG
+import com.ethran.notable.classes.AppRepository
 import com.ethran.notable.db.PageRepository
 import com.ethran.notable.db.Stroke
-import com.ethran.notable.modals.A4_HEIGHT
-import com.ethran.notable.modals.A4_WIDTH
+import com.ethran.notable.modals.DEFAULT_PPI
+import com.ethran.notable.modals.PaperFormat
 import io.shipbook.shipbooksdk.Log
 import android.graphics.Color
 import android.graphics.Paint
-import com.ethran.notable.TAG
 import com.ethran.notable.db.BookRepository
-import com.ethran.notable.modals.A4_HEIGHT
-import com.ethran.notable.modals.A4_WIDTH
+import com.ethran.notable.modals.AppSettings
+import com.ethran.notable.db.KvProxy
 
 
 
@@ -64,20 +64,32 @@ fun PdfDocument.writePage(context: Context, number: Int, repo: PageRepository, i
     val (page, strokes) = repo.getWithStrokeById(id)
     val (_, images) = repo.getWithImageById(id)
 
+    // Get global app settings for device PPI
+    val appSettings = KvProxy(context).get("APP_SETTINGS", AppSettings.serializer())
+    val devicePpi = appSettings?.devicePpi ?: DEFAULT_PPI
+
     // Check if the page belongs to a notebook with pagination enabled
     val notebookId = page.notebookId
-    val isPaginationEnabled = if (notebookId != null) {
-        val notebook = BookRepository(context).getById(notebookId)
-        notebook?.usePagination ?: false
-    } else false
+    val notebook = if (notebookId != null) {
+        BookRepository(context).getById(notebookId)
+    } else null
 
-    val scaleFactor = A4_WIDTH.toFloat() / SCREEN_WIDTH
+    // Get pagination settings and paper format
+    val isPaginationEnabled = notebook?.usePagination ?: false
+    val paperFormat = notebook?.paperFormat ?: PaperFormat.A4
+
+    // Calculate paper dimensions in points based on the selected paper format and device PPI
+    val paperWidth = paperFormat.getWidthInPoints(devicePpi)
+    val paperHeight = paperFormat.getHeightInPoints(devicePpi)
+
+    // Calculate scale factor (ratio of paper width to screen width)
+    val scaleFactor = paperWidth.toFloat() / SCREEN_WIDTH
 
     val strokeHeight = if (strokes.isEmpty()) 0 else strokes.maxOf(Stroke::bottom).toInt() + 50
     val strokeWidth = if (strokes.isEmpty()) 0 else strokes.maxOf(Stroke::right).toInt() + 50
 
     if (isPaginationEnabled) {
-        // For paginated notebook, create multiple PDF pages based on letter page size
+        // For paginated notebook, create multiple PDF pages based on selected paper format
         val pageWidth = SCREEN_WIDTH
         val pageHeight = PaginationConstants.calculatePageHeight(pageWidth)
 
@@ -90,8 +102,8 @@ fun PdfDocument.writePage(context: Context, number: Int, repo: PageRepository, i
             val pageTop = PaginationConstants.getPageTopPosition(i, pageHeight)
             val pageBottom = pageTop + pageHeight
 
-            // Create a PDF page with standard size
-            val documentPage = startPage(PdfDocument.PageInfo.Builder(A4_WIDTH, A4_HEIGHT, number + i).create())
+            // Create a PDF page with the selected paper format size
+            val documentPage = startPage(PdfDocument.PageInfo.Builder(paperWidth, paperHeight, number + i).create())
             val canvas = documentPage.canvas
             canvas.scale(scaleFactor, scaleFactor)
 
@@ -132,14 +144,12 @@ fun PdfDocument.writePage(context: Context, number: Int, repo: PageRepository, i
     } else {
         // Original non-paginated approach
         val contentHeight = strokeHeight.coerceAtLeast(SCREEN_HEIGHT)
-        val pageHeight = (contentHeight * scaleFactor).toInt()
-        val contentWidth = strokeWidth.coerceAtLeast(SCREEN_WIDTH)
+        val scaledContentHeight = (contentHeight * scaleFactor).toInt()
 
-        val documentPage = startPage(PdfDocument.PageInfo.Builder(A4_WIDTH, pageHeight, number).create())
-
-        // Center content on the A4 page
-        val offsetX = (A4_WIDTH - (contentWidth * scaleFactor)) / 2
-        val offsetY = (A4_HEIGHT - (contentHeight * scaleFactor)) / 2
+        // Create a PDF page with the right dimensions
+        val documentPage = startPage(PdfDocument.PageInfo.Builder(paperWidth,
+            if (scaledContentHeight > paperHeight) scaledContentHeight else paperHeight,
+            number).create())
 
         documentPage.canvas.scale(scaleFactor, scaleFactor)
         drawBg(documentPage.canvas, page.nativeTemplate, 0, scaleFactor)

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.ethran.notable.TAG
+import com.ethran.notable.classes.AppRepository
 import com.ethran.notable.classes.LocalSnackContext
 import com.ethran.notable.classes.SnackConf
 import com.ethran.notable.components.BreadCrumb
@@ -67,6 +68,13 @@ fun NotebookConfigDialog(bookId: String, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val snackManager = LocalSnackContext.current
 
+    // Get the global App settings to get device PPI
+    val appSettings by remember {
+        AppRepository(context).kvProxy.observeKv(
+            "APP_SETTINGS", AppSettings.serializer(), AppSettings(version = 1)
+        )
+    }.observeAsState()
+
     if (book == null) return
 
     var bookTitle by remember {
@@ -77,6 +85,10 @@ fun NotebookConfigDialog(bookId: String, onClose: () -> Unit) {
         mutableStateOf(book!!.usePagination)
     }
 
+    var selectedPaperFormat by remember {
+        mutableStateOf(book!!.paperFormat ?: PaperFormat.A4)
+    }
+
     val formattedCreatedAt =
         remember { android.text.format.DateFormat.format("dd MMM yyyy HH:mm", book!!.createdAt) }
     val formattedUpdatedAt =
@@ -85,6 +97,8 @@ fun NotebookConfigDialog(bookId: String, onClose: () -> Unit) {
     var showMoveDialog by remember { mutableStateOf(false) }
     var bookFolder by remember {  mutableStateOf(book?.parentFolderId)}
 
+    // Current device PPI
+    val devicePpi = appSettings?.devicePpi ?: DEFAULT_PPI
 
     // Confirmation Dialog for Deletion
     if (showDeleteDialog) {
@@ -222,10 +236,34 @@ fun NotebookConfigDialog(bookId: String, onClose: () -> Unit) {
                         )
                     }
 
+                    // Paper Format Selection
+                    Row {
+                        Text(text = "Paper Format")
+                        Spacer(Modifier.width(30.dp))
+                        SelectMenu(
+                            options = PaperFormat.values().map { it to it.displayName },
+                            onChange = {
+                                if (selectedPaperFormat != it) {
+                                    selectedPaperFormat = it
+                                    val updatedBook = book!!.copy(paperFormat = it)
+                                    bookRepository.update(updatedBook)
+                                }
+                            },
+                            value = selectedPaperFormat
+                        )
+                    }
+
+                    // Display the dimensions of the selected paper format based on device PPI
+                    Text(
+                        text = "Paper Size: ${selectedPaperFormat.getWidthInPoints(devicePpi)} × ${selectedPaperFormat.getHeightInPoints(devicePpi)} points (${devicePpi} PPI)",
+                        color = Color.Gray,
+                        fontSize = 14.sp
+                    )
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "Use Pagination (Letter 11x8.5)")
+                        Text(text = "Use Pagination (${selectedPaperFormat.displayName})")
                         Spacer(Modifier.width(10.dp))
                         Switch(
                             checked = usePagination,

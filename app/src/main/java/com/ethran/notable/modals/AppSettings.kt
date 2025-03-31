@@ -48,10 +48,26 @@ import kotlin.concurrent.thread
 // it is workaround for now
 var NeoTools: Boolean = false
 
-// Define the target page size (A4 in points: 595 x 842)
-// This is if your device is 72 DPI
-val A4_WIDTH = 595
-val A4_HEIGHT = 842
+// Paper Size constants (in inches)
+@Serializable
+enum class PaperFormat(val displayName: String, val widthInches: Float, val heightInches: Float) {
+    A4("A4", 8.27f, 11.69f),
+    LETTER("Letter", 8.5f, 11.0f),
+    LEGAL("Legal", 8.5f, 14.0f);
+
+    // Calculate width in points for the given PPI
+    fun getWidthInPoints(ppi: Int): Int = (widthInches * ppi).toInt()
+
+    // Calculate height in points for the given PPI
+    fun getHeightInPoints(ppi: Int): Int = (heightInches * ppi).toInt()
+}
+
+// Default PPI is 72
+const val DEFAULT_PPI = 72
+
+// For backward compatibility
+val A4_WIDTH = PaperFormat.A4.getWidthInPoints(DEFAULT_PPI)
+val A4_HEIGHT = PaperFormat.A4.getHeightInPoints(DEFAULT_PPI)
 
 @Serializable
 data class AppSettings(
@@ -60,6 +76,8 @@ data class AppSettings(
     val quickNavPages: List<String> = listOf(),
     val debugMode: Boolean = false,
     val neoTools: Boolean = false,
+    val paperFormat: PaperFormat = PaperFormat.A4,
+    val devicePpi: Int = DEFAULT_PPI,
 
     val doubleTapAction: GestureAction? = defaultDoubleTapAction,
     val twoFingerTapAction: GestureAction? = defaultTwoFingerTapAction,
@@ -140,6 +158,43 @@ fun AppSettingsModal(onClose: () -> Unit) {
                             )
                         },
                         value = settings?.defaultNativeTemplate ?: "blank"
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+
+                // Paper format selection
+                Row {
+                    Text(text = "Paper Format")
+                    Spacer(Modifier.width(10.dp))
+                    SelectMenu(
+                        options = PaperFormat.values().map { it to it.displayName },
+                        onChange = {
+                            kv.setKv(
+                                "APP_SETTINGS",
+                                settings!!.copy(paperFormat = it),
+                                AppSettings.serializer()
+                            )
+                        },
+                        value = settings?.paperFormat ?: PaperFormat.A4
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+
+                // Device PPI input
+                Row {
+                    Text(text = "Device PPI")
+                    Spacer(Modifier.width(10.dp))
+                    val ppiOptions = listOf(72, 96, 150, 300, 600).map { it to "$it PPI" }
+                    SelectMenu(
+                        options = ppiOptions,
+                        onChange = {
+                            kv.setKv(
+                                "APP_SETTINGS",
+                                settings!!.copy(devicePpi = it),
+                                AppSettings.serializer()
+                            )
+                        },
+                        value = settings?.devicePpi ?: DEFAULT_PPI
                     )
                 }
                 Spacer(Modifier.height(10.dp))

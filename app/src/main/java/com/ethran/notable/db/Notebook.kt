@@ -11,6 +11,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Update
 import com.ethran.notable.TAG
+import com.ethran.notable.modals.PaperFormat
 import io.shipbook.shipbooksdk.Log
 import java.util.Date
 import java.util.UUID
@@ -39,6 +40,10 @@ data class Notebook(
     // New pagination setting
     @ColumnInfo(defaultValue = "false")
     val usePagination: Boolean = false,
+
+    // New paper format setting
+    @ColumnInfo(defaultValue = "A4")
+    val paperFormat: PaperFormat? = PaperFormat.A4,
 
     val createdAt: Date = Date(),
     val updatedAt: Date = Date()

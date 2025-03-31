@@ -14,6 +14,7 @@ import androidx.compose.material.Switch
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -24,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.ethran.notable.classes.AppRepository
 import com.ethran.notable.classes.DrawCanvas
@@ -37,16 +39,30 @@ fun PageSettingsModal(pageView: PageView, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    // Get the app settings to get the device PPI
+    val appSettings by remember {
+        AppRepository(context).kvProxy.observeKv(
+            "APP_SETTINGS", AppSettings.serializer(), AppSettings(version = 1)
+        )
+    }.observeAsState()
+
     // Get the notebook if this page is part of one
     val notebookId = pageView.pageFromDb?.notebookId
     val notebook = if (notebookId != null) {
         AppRepository(context).bookRepository.getById(notebookId)
     } else null
 
-    // State for pagination toggle
+    // State for pagination toggle and paper format
     var usePagination by remember {
         mutableStateOf(notebook?.usePagination ?: false)
     }
+
+    var selectedPaperFormat by remember {
+        mutableStateOf(notebook?.paperFormat ?: PaperFormat.A4)
+    }
+
+    // Current device PPI
+    val devicePpi = appSettings?.devicePpi ?: DEFAULT_PPI
 
     Dialog(
         onDismissRequest = { onClose() }
@@ -94,12 +110,45 @@ fun PageSettingsModal(pageView: PageView, onClose: () -> Unit) {
                 }
                 Spacer(Modifier.height(20.dp))
 
-                // Only show pagination toggle if the page is part of a notebook
+                // Only show pagination and paper format options if the page is part of a notebook
                 if (notebookId != null && notebook != null) {
+                    // Paper format selection (only for pages that are part of a notebook)
+                    Row {
+                        Text(text = "Paper Format")
+                        Spacer(Modifier.width(10.dp))
+                        SelectMenu(
+                            options = PaperFormat.values().map { it to it.displayName },
+                            onChange = {
+                                if (selectedPaperFormat != it) {
+                                    selectedPaperFormat = it
+                                    // Update the notebook with the new paper format
+                                    val updatedNotebook = notebook.copy(paperFormat = it)
+                                    AppRepository(context).bookRepository.update(updatedNotebook)
+
+                                    // Refresh UI to reflect changes
+                                    scope.launch {
+                                        DrawCanvas.refreshUi.emit(Unit)
+                                    }
+                                }
+                            },
+                            value = selectedPaperFormat
+                        )
+                    }
+
+                    // Display paper dimensions based on device PPI
+                    Text(
+                        text = "Paper Size: ${selectedPaperFormat.getWidthInPoints(devicePpi)} × ${selectedPaperFormat.getHeightInPoints(devicePpi)} points (${devicePpi} PPI)",
+                        color = Color.Gray,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
+
+                    Spacer(Modifier.height(10.dp))
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "Use Pagination (Letter 11x8.5)")
+                        Text(text = "Use Pagination (${selectedPaperFormat.displayName})")
                         Spacer(Modifier.width(10.dp))
                         Switch(
                             checked = usePagination,
@@ -122,7 +171,7 @@ fun PageSettingsModal(pageView: PageView, onClose: () -> Unit) {
 
                     Spacer(Modifier.height(5.dp))
                     Text(
-                        text = "Pagination breaks content into letter-sized pages for printing",
+                        text = "Pagination breaks content into pages for printing",
                         color = Color.Gray,
                         modifier = Modifier.padding(start = 5.dp)
                     )

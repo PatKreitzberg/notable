@@ -8,6 +8,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import com.ethran.notable.modals.PaperFormat
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -36,12 +37,29 @@ class Converters {
     fun dateToTimestamp(date: Date?): Long? {
         return date?.time
     }
+
+    // Converters for PaperFormat enum
+    @TypeConverter
+    fun fromPaperFormat(value: PaperFormat?): String? {
+        return value?.name
+    }
+
+    @TypeConverter
+    fun toPaperFormat(value: String?): PaperFormat? {
+        return value?.let {
+            try {
+                PaperFormat.valueOf(it)
+            } catch (e: IllegalArgumentException) {
+                PaperFormat.A4 // Default to A4 if invalid format
+            }
+        }
+    }
 }
 
 
 @Database(
     entities = [Folder::class, Notebook::class, Page::class, Stroke::class, Image::class, Kv::class],
-    version = 31,
+    version = 32, // Increase version for the new PaperFormat field
     autoMigrations = [
         AutoMigration(19, 20),
         AutoMigration(20, 21),
@@ -54,6 +72,7 @@ class Converters {
         AutoMigration(28, 29),
         AutoMigration(29, 30),
         AutoMigration(30, 31),
+        AutoMigration(31, 32), // Migration for PaperFormat
     ], exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -102,8 +121,8 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_16_17,
                                 MIGRATION_17_18,
                                 MIGRATION_22_23,
-                                MIGRATION_29_30
-                                //MIGRATION_30_31
+                                MIGRATION_29_30,
+                                MIGRATION_31_32 // Add migration for PaperFormat
                             )
                             .build()
                 }

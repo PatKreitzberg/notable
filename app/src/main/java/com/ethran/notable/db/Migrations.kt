@@ -39,3 +39,10 @@ val MIGRATION_29_30 = object : Migration(29, 30) {
     }
 }
 
+// Add migration for PaperFormat
+val MIGRATION_31_32 = object : Migration(31, 32) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        // Add paperFormat column to Notebook table with default value "A4"
+        database.execSQL("ALTER TABLE Notebook ADD COLUMN paperFormat TEXT DEFAULT 'A4'")
+    }
+}

@@ -1,16 +1,15 @@
 package com.ethran.notable.utils
 
+import com.ethran.notable.modals.PaperFormat
+
 // Constants for pagination
 object PaginationConstants {
-    // Letter size ratio (11:8.5)
-    const val LETTER_HEIGHT_TO_WIDTH_RATIO = 11.0f / 8.5f
-
     // Space between pages (in pixels)
     const val PAGE_GAP = 30
 
-    // Calculate page height based on width and ratio
-    fun calculatePageHeight(width: Int): Int {
-        return (width * LETTER_HEIGHT_TO_WIDTH_RATIO).toInt()
+    // Calculate page height based on width, paper format, and ratio
+    fun calculatePageHeight(width: Int, paperFormat: PaperFormat = PaperFormat.A4): Int {
+        return (width * (paperFormat.heightInches / paperFormat.widthInches)).toInt()
     }
 
     // Calculate which page number a Y coordinate falls into
