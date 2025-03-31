@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ethran.notable.BuildConfig
@@ -78,6 +79,7 @@ data class AppSettings(
     val neoTools: Boolean = false,
     val paperFormat: PaperFormat = PaperFormat.A4,
     val devicePpi: Int = DEFAULT_PPI,
+    val defaultPagination: Boolean = false, // New field for default pagination setting
 
     val doubleTapAction: GestureAction? = defaultDoubleTapAction,
     val twoFingerTapAction: GestureAction? = defaultTwoFingerTapAction,
@@ -176,6 +178,34 @@ fun AppSettingsModal(onClose: () -> Unit) {
                             )
                         },
                         value = settings?.paperFormat ?: PaperFormat.A4
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+
+                // Paper format dimensions info
+                Text(
+                    text = "Paper Size: ${settings?.paperFormat?.getWidthInPoints(settings?.devicePpi ?: DEFAULT_PPI)} × ${settings?.paperFormat?.getHeightInPoints(settings?.devicePpi ?: DEFAULT_PPI)} points (${settings?.devicePpi ?: DEFAULT_PPI} PPI)",
+                    color = Color.Gray,
+                    fontSize = 14.sp
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                // Default pagination setting
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "Default Pagination for New Notebooks")
+                    Spacer(Modifier.width(10.dp))
+                    Switch(
+                        checked = settings?.defaultPagination ?: false,
+                        onCheckedChange = { isChecked ->
+                            kv.setKv(
+                                "APP_SETTINGS",
+                                settings!!.copy(defaultPagination = isChecked),
+                                AppSettings.serializer()
+                            )
+                        }
                     )
                 }
                 Spacer(Modifier.height(10.dp))

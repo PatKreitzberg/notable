@@ -11,6 +11,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Update
 import com.ethran.notable.TAG
+import com.ethran.notable.modals.AppSettings
 import com.ethran.notable.modals.PaperFormat
 import io.shipbook.shipbooksdk.Log
 import java.util.Date
@@ -77,18 +78,51 @@ interface NotebookDao {
     fun delete(id: String)
 }
 
-class BookRepository(context: Context) {
+class BookRepository(private val context: Context) {
     var db = AppDatabase.getDatabase(context).notebookDao()
     private var pageDb = AppDatabase.getDatabase(context).pageDao()
 
+    private val kvProxy = KvProxy(context)
+
     fun create(notebook: Notebook) {
-        db.create(notebook)
-        val page = Page(notebookId = notebook.id, nativeTemplate = notebook.defaultNativeTemplate)
+        // Get app settings for defaults
+        val appSettings = kvProxy.get("APP_SETTINGS", AppSettings.serializer())
+
+        // Log for debugging
+        Log.i(TAG, "Creating notebook with default settings from app settings")
+        Log.i(TAG, "App settings: ${appSettings?.toString() ?: "null"}")
+        Log.i(TAG, "Original notebook: ${notebook.toString()}")
+
+        // Apply ALL defaults from app settings if available
+        val notebookToCreate = if (appSettings != null) {
+            // Copy the notebook but override with defaults for any unspecified properties
+            notebook.copy(
+                // Apply app settings to new notebook
+                defaultNativeTemplate = if (notebook.defaultNativeTemplate.isBlank())
+                    appSettings.defaultNativeTemplate else notebook.defaultNativeTemplate,
+                paperFormat = appSettings.paperFormat,
+                usePagination = appSettings.defaultPagination
+            )
+        } else {
+            // No app settings, use the notebook as-is
+            notebook
+        }
+
+        // Log the final notebook for debugging
+        Log.i(TAG, "Final notebook with defaults applied: ${notebookToCreate.toString()}")
+
+        // Create the notebook and page
+        db.create(notebookToCreate)
+        val page = Page(
+            notebookId = notebookToCreate.id,
+            nativeTemplate = notebookToCreate.defaultNativeTemplate
+        )
         pageDb.create(page)
 
-        db.setPageIds(notebook.id, listOf(page.id))
-        db.setOpenPageId(notebook.id, page.id)
+        db.setPageIds(notebookToCreate.id, listOf(page.id))
+        db.setOpenPageId(notebookToCreate.id, page.id)
     }
+
     fun createEmpty(notebook: Notebook) {
         db.create(notebook)
     }
