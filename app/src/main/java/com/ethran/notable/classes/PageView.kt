@@ -43,6 +43,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.system.measureTimeMillis
+import kotlin.math.ceil
 
 class PageView(
     val context: Context,
@@ -239,13 +240,13 @@ class PageView(
         val maxContentBottom = max(maxStrokeBottom.toInt(), maxImageBottom) + 50
 
         if (usePagination) {
-            // For paginated notebook, calculate height based on the number of pages needed
-            // to fit all content plus gaps between pages
-            val contentPages = PaginationConstants.getPageNumberForPosition(maxContentBottom, pageHeight) + 1
-            height = contentPages * (pageHeight + PaginationConstants.PAGE_GAP)
+            // For pagination, ensure height is based on complete pages
+            val pageWithGap = pageHeight + PaginationConstants.PAGE_GAP
+            val totalPages = ceil(maxContentBottom.toFloat() / pageHeight).toInt()
+            height = (totalPages * pageWithGap).coerceAtLeast(viewHeight)
         } else {
-            // For non-pagination, use the old approach
-            height = max(maxContentBottom, viewHeight)
+            // For non-pagination, use the normal height calculation
+            height = maxContentBottom.coerceAtLeast(viewHeight)
         }
     }
 
@@ -533,29 +534,96 @@ class PageView(
     }
 
     fun updatePagination(isPaginationEnabled: Boolean) {
-        if (usePagination != isPaginationEnabled) {
-            usePagination = isPaginationEnabled
+        // If the setting hasn't changed, do nothing
+        if (usePagination == isPaginationEnabled) return
 
-            if (isPaginationEnabled) {
-                // Get the notebook to get the paper format
-                val notebook = if (pageFromDb?.notebookId != null) {
-                    AppRepository(context).bookRepository.getById(pageFromDb?.notebookId!!)
-                } else null
+        // Calculate the page height based on the current width
+        val newPageHeight = PaginationConstants.calculatePageHeight(viewWidth)
+        val pageGap = PaginationConstants.PAGE_GAP
 
-                // Get the paper format from the notebook or use default
-                val paperFormat = notebook?.paperFormat ?: PaperFormat.A4
+        // If we're turning pagination OFF (need to fill in gaps)
+        if (!isPaginationEnabled && usePagination) {
+            Log.i(TAG, "Removing pagination gaps - collapsing content")
 
-                pageHeight = PaginationConstants.calculatePageHeight(viewWidth, paperFormat)
-                // Recalculate height based on pagination
-                computeHeight()
+            // Create transformed strokes with gaps removed
+            val transformedStrokes = mutableListOf<Stroke>()
+
+            strokes.forEach { stroke ->
+                // Determine which page this stroke is on
+                val pageNum = (stroke.top / (newPageHeight + pageGap)).toInt()
+
+                // Remove the gaps that were added by pagination
+                val adjustedPoints = stroke.points.map { point ->
+                    val gapsToRemove = pageNum * pageGap
+                    point.copy(y = point.y - gapsToRemove)
+                }
+
+                // Calculate the bounds for this adjusted stroke
+                val top = adjustedPoints.minOf { it.y }
+                val bottom = adjustedPoints.maxOf { it.y }
+                val left = adjustedPoints.minOf { it.x }
+                val right = adjustedPoints.maxOf { it.x }
+
+                // Create adjusted stroke
+                val adjustedStroke = stroke.copy(
+                    points = adjustedPoints,
+                    top = top,
+                    bottom = bottom,
+                    left = left,
+                    right = right
+                )
+
+                transformedStrokes.add(adjustedStroke)
             }
 
-            // Redraw the page with new pagination setting
-            windowedCanvas.drawColor(Color.WHITE)
-            drawArea(Rect(0, 0, windowedCanvas.width, windowedCanvas.height))
-            persistBitmapDebounced()
+            // Transform images - remove gaps
+            val transformedImages = mutableListOf<Image>()
+
+            images.forEach { image ->
+                // Determine which page this image is on
+                val pageNum = (image.y / (newPageHeight + pageGap)).toInt()
+                val gapsToRemove = pageNum * pageGap
+                val adjustedY = image.y - gapsToRemove
+
+                transformedImages.add(image.copy(y = adjustedY))
+            }
+
+            // Replace the existing strokes and images with transformed ones
+            if (transformedStrokes.isNotEmpty()) {
+                removeStrokesFromPersistLayer(strokes.map { it.id })
+                strokes = transformedStrokes
+                saveStrokesToPersistLayer(transformedStrokes)
+                indexStrokes()
+            }
+
+            if (transformedImages.isNotEmpty()) {
+                removeImagesFromPersistLayer(images.map { it.id })
+                images = transformedImages
+                saveImagesToPersistLayer(transformedImages)
+                indexImages()
+            }
         }
+
+        // Update pagination state
+        usePagination = isPaginationEnabled
+
+        // Update page height
+        pageHeight = if (isPaginationEnabled) newPageHeight else 0
+
+        // Recalculate height based on content
+        computeHeight()
+
+        // Redraw the page
+        windowedCanvas.drawColor(Color.WHITE)
+        drawArea(Rect(0, 0, windowedCanvas.width, windowedCanvas.height))
+
+        // Persist changes
+        persistBitmapDebounced()
+
+        // Log the change
+        Log.i(TAG, "Pagination toggled to: $isPaginationEnabled")
     }
+
 
 
     private fun persistBitmapDebounced() {
