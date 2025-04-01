@@ -108,8 +108,8 @@ android {
         jvmTarget = '17'
     }
     buildFeatures {
-        compose true
-        buildConfig true
+        compose =  true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion compose_version
@@ -181,7 +181,7 @@ dependencies {
 
     implementation 'com.aventrix.jnanoid:jnanoid:2.0.0'
 
-    implementation platform('com.google.firebase:firebase-bom:33.10.0')
+    implementation platform('com.google.firebase:firebase-bom:33.12.0')
     implementation 'com.google.firebase:firebase-analytics-ktx'
 
     implementation 'br.com.devsrsouza.compose.icons.android:feather:1.0.0'
@@ -195,7 +195,7 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0"
 
     // Google Drive API
-    implementation 'com.google.android.gms:play-services-auth:20.7.0'
+    implementation 'com.google.android.gms:play-services-auth:21.3.0'
     implementation 'com.google.api-client:google-api-client-android:2.2.0'
     implementation 'com.google.apis:google-api-services-drive:v3-rev20231128-2.0.0'
     implementation 'com.google.http-client:google-http-client-gson:1.43.3'

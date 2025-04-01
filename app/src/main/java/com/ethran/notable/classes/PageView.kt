@@ -31,6 +31,7 @@ import com.ethran.notable.utils.drawImage
 import com.ethran.notable.utils.drawStroke
 import io.shipbook.shipbooksdk.Log
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
@@ -99,7 +100,7 @@ class PageView(
         val paperFormat = notebookInfo?.paperFormat ?: PaperFormat.A4
 
         pageHeight = if (usePagination) {
-            PaginationConstants.calculatePageHeight(width, paperFormat)
+            PaginationConstants.calculatePageHeight(viewWidth, paperFormat)
         } else {
             0 // Not used when pagination is off
         }
@@ -108,6 +109,16 @@ class PageView(
 
         val isCached = loadBitmap()
         initFromPersistLayer(isCached)
+
+        coroutineScope.launch {
+            delay(100) // Short delay to ensure view is measured
+            if (usePagination) {
+                pageHeight = PaginationConstants.calculatePageHeight(viewWidth)
+                windowedCanvas.drawColor(Color.WHITE)
+                drawArea(Rect(0, 0, windowedCanvas.width, windowedCanvas.height))
+                persistBitmapDebounced()
+            }
+        }
     }
 
 
