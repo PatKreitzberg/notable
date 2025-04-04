@@ -414,8 +414,14 @@ class PageView(
         activeCanvas.restore()
     }
 
-    // Draw background for paginated view
-    private fun drawPaginatedBackground(canvas: Canvas, visibleArea: Rect) {
+    /**
+     * Draws paginated background for the specified visible area.
+     * This optimized version only draws the pages that are currently visible in the given area.
+     *
+     * @param canvas The canvas to draw on
+     * @param visibleArea The area that is currently visible and needs to be drawn
+     */
+    fun drawPaginatedBackground(canvas: Canvas, visibleArea: Rect) {
         if (!usePagination) {
             drawBg(canvas, pageFromDb?.nativeTemplate ?: "blank", scroll)
             return
@@ -431,10 +437,15 @@ class PageView(
             val pageBottom = pageTop + pageHeight
 
             // Define the area for this page
-            val pageRect = Rect(0, pageTop - scroll, canvas.width, pageBottom - scroll)
+            val pageRect = Rect(
+                visibleArea.left,
+                Math.max(pageTop - scroll, visibleArea.top),
+                visibleArea.right,
+                Math.min(pageBottom - scroll, visibleArea.bottom)
+            )
 
             // Only draw if page is visible in current view
-            if (pageRect.bottom > 0 && pageRect.top < canvas.height) {
+            if (pageRect.bottom > pageRect.top) {
                 canvas.save()
                 canvas.clipRect(pageRect)
 
@@ -456,9 +467,16 @@ class PageView(
             if (pageNumber < endPageNumber) {
                 val gapTop = pageBottom - scroll
                 val gapBottom = gapTop + PaginationConstants.PAGE_GAP
-                val gapRect = Rect(0, gapTop, canvas.width, gapBottom)
 
-                if (gapRect.bottom > 0 && gapRect.top < canvas.height) {
+                // Only draw the gap if it's in the visible area
+                if (gapBottom > visibleArea.top && gapTop < visibleArea.bottom) {
+                    val gapRect = Rect(
+                        visibleArea.left,
+                        Math.max(gapTop, visibleArea.top),
+                        visibleArea.right,
+                        Math.min(gapBottom, visibleArea.bottom)
+                    )
+
                     canvas.save()
                     canvas.clipRect(gapRect)
                     canvas.drawColor(Color.LTGRAY)

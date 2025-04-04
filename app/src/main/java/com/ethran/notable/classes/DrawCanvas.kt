@@ -32,13 +32,18 @@ import com.ethran.notable.utils.Pen
 import com.ethran.notable.utils.PlacementMode
 import com.ethran.notable.utils.SimplePointF
 import com.ethran.notable.utils.convertDpToPixel
+import com.ethran.notable.utils.drawBg
 import com.ethran.notable.utils.drawImage
+import com.ethran.notable.utils.drawStroke
 import com.ethran.notable.utils.handleDraw
 import com.ethran.notable.utils.handleErase
 import com.ethran.notable.utils.handleLine
+import com.ethran.notable.utils.imageBounds
 import com.ethran.notable.utils.penToStroke
 import com.ethran.notable.utils.pointsToPath
 import com.ethran.notable.utils.selectPaint
+import com.ethran.notable.utils.strokeBounds
+import com.ethran.notable.utils.toRect
 import com.ethran.notable.utils.uriToBitmap
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
@@ -794,9 +799,11 @@ class DrawCanvas(
     }
 
 
+    // Update the drawCanvasToView method in DrawCanvas to optimize rendering during zoom
+
     /**
-     * Draws the canvas to view, applying zoom transformations if needed.
-     * This displays the current canvas content on screen with proper zoom level.
+     * Draws the canvas to view, applying zoom transformations and optimizing what's rendered based on zoom level.
+     * This ensures we only render what's visible on screen, improving performance.
      */
     fun drawCanvasToView() {
         val canvas = this.holder.lockCanvas() ?: return
@@ -804,7 +811,31 @@ class DrawCanvas(
         // Clear the canvas
         canvas.drawColor(Color.WHITE)
 
-        // Apply zoom transformation if not at 100%
+        // Calculate visible area based on zoom level
+        val visibleRect = if (state.zoomScale != 1.0f) {
+            // When zoomed out (scale < 1.0), we need to show more content
+            // When zoomed in (scale > 1.0), we need to show less content but at higher detail
+
+            // Center point of the view
+            val centerX = page.viewWidth / 2f
+            val centerY = page.viewHeight / 2f
+
+            // Calculate visible area dimensions
+            val visibleWidth = page.viewWidth / state.zoomScale
+            val visibleHeight = page.viewHeight / state.zoomScale
+
+            // Calculate the top-left corner of the visible area
+            val left = centerX - (visibleWidth / 2f)
+            val top = centerY - (visibleHeight / 2f) + page.scroll
+
+            // Create a rectangle representing the visible area in document coordinates
+            RectF(left, top, left + visibleWidth, top + visibleHeight)
+        } else {
+            // At normal zoom, visible area is just the current view
+            RectF(0f, page.scroll.toFloat(), page.viewWidth.toFloat(), (page.scroll + page.viewHeight).toFloat())
+        }
+
+        // Apply zoom transformation
         if (state.zoomScale != 1.0f) {
             // Save the canvas state before transformations
             canvas.save()
@@ -819,8 +850,42 @@ class DrawCanvas(
             canvas.translate(-centerX, -centerY)
         }
 
-        // Draw the main content bitmap
-        canvas.drawBitmap(page.windowedBitmap, 0f, 0f, Paint())
+        // Draw background first
+        if (page.usePagination) {
+            // Create a clip region for the visible area to limit what we draw
+            val clipRect = Rect(
+                visibleRect.left.toInt(),
+                visibleRect.top.toInt(),
+                visibleRect.right.toInt(),
+                visibleRect.bottom.toInt()
+            )
+
+            // Draw only the visible portion of the paginated background
+            page.drawPaginatedBackground(canvas, clipRect)
+        } else {
+            // Draw normal background
+            drawBg(canvas, page.pageFromDb?.nativeTemplate ?: "blank", page.scroll)
+        }
+
+        // Draw only the strokes that intersect with the visible area
+        for (stroke in page.strokes) {
+            val strokeBounds = strokeBounds(stroke)
+
+            // Check if stroke is in visible area before drawing
+            if (strokeBounds.toRect().intersect(visibleRect.toRect())) {
+                drawStroke(canvas, stroke, IntOffset(0, -page.scroll))
+            }
+        }
+
+        // Draw only the images that intersect with the visible area
+        for (image in page.images) {
+            val bounds = imageBounds(image)
+
+            // Check if image is in visible area before drawing
+            if (bounds.toRect().intersect(visibleRect.toRect())) {
+                drawImage(page.context, canvas, image, IntOffset(0, -page.scroll))
+            }
+        }
 
         // Draw selection if in select mode
         if (getActualState().mode == Mode.Select) {

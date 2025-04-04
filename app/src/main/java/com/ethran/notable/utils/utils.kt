@@ -481,3 +481,17 @@ fun shareBitmap(context: Context, bitmap: Bitmap) {
 }
 
 
+/**
+ * Extension function to convert RectF to Rect.
+ * This is needed for intersection checks between RectF and Rect.
+ *
+ * @return A new Rect with the same bounds as this RectF.
+ */
+fun RectF.toRect(): Rect {
+    return Rect(
+        left.toInt(),
+        top.toInt(),
+        right.toInt(),
+        bottom.toInt()
+    )
+}
