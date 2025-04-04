@@ -310,10 +310,39 @@ class DrawCanvas(
 
         override fun onRawErasingTouchPointListReceived(plist: TouchPointList?) {
             if (plist == null) return
+
+            // Apply the same coordinate transformation for eraser that we do for pen
+            val adjustedPoints = if (state.zoomScale != 1.0f) {
+                // Create a list of adjusted points
+                val centerX = page.viewWidth / 2f
+                val centerY = page.viewHeight / 2f
+
+                plist.points.map { point ->
+                    // Adjust for zoom by reversing the zoom transformation
+                    // First translate to make the center the origin
+                    val relativeX = point.x - centerX
+                    val relativeY = point.y - centerY
+
+                    // Scale by the inverse of the zoom factor
+                    val scaledX = relativeX / state.zoomScale
+                    val scaledY = relativeY / state.zoomScale
+
+                    // Translate back to original coordinate system
+                    val adjustedX = scaledX + centerX
+                    val adjustedY = scaledY + centerY
+
+                    // Create a SimplePointF with the adjusted coordinates
+                    SimplePointF(adjustedX, adjustedY + page.scroll)
+                }
+            } else {
+                // If not zoomed, use original points
+                plist.points.map { SimplePointF(it.x, it.y + page.scroll) }
+            }
+
             handleErase(
                 this@DrawCanvas.page,
                 history,
-                plist.points.map { SimplePointF(it.x, it.y + page.scroll) },
+                adjustedPoints,
                 eraser = getActualState().eraser
             )
             drawCanvasToView()
