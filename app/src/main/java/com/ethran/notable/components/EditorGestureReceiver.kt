@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,7 +20,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -45,6 +48,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs
+import kotlin.math.hypot
 
 
 private const val HOLD_THRESHOLD_MS = 300
@@ -56,6 +60,8 @@ private const val DOUBLE_TAP_MIN_MS = 20L
 private const val TWO_FINGER_TOUCH_TAP_MAX_TIME = 200L
 private const val TWO_FINGER_TOUCH_TAP_MIN_TIME = 20L
 private const val TWO_FINGER_TAP_MOVEMENT_TOLERANCE = 20f
+// Threshold to detect pinch gestures
+private const val PINCH_GESTURE_THRESHOLD = 0.05f
 
 
 @Composable
@@ -76,16 +82,15 @@ fun EditorGestureReceiver(
     var crossPosition by remember { mutableStateOf<IntOffset?>(null) }
     var rectangleBounds by remember { mutableStateOf<Rect?>(null) }
     var isSelection by remember { mutableStateOf(false) }
+
+    // Flag to track if we're currently in a pinch-to-zoom gesture
+    var isPinchZooming by remember { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .pointerInput(Unit) {
                 awaitEachGesture {
                     try {
-                        // testing if it will fixed exception:
-                        // kotlinx.coroutines.CompletionHandlerException: Exception in resume
-                        // onCancellation handler for CancellableContinuation(DispatchedContinuation[AndroidUiDispatcher@145d639,
-                        // Continuation at androidx.compose.foundation.gestures.PressGestureScopeImpl.reset(TapGestureDetector.kt:357)
-                        // @8b7a2c]){Completed}@4a49cf5
                         if (!coroutineScope.isActive) return@awaitEachGesture
 
                         val gestureState = GestureState()
@@ -93,6 +98,10 @@ fun EditorGestureReceiver(
                             state.isDrawing = true
                         }
                         isSelection = false
+
+                        // Reset pinch zooming flag at start of new gesture
+                        isPinchZooming = false
+
                         // Detect initial touch
                         val down = awaitFirstDown()
 
@@ -104,13 +113,20 @@ fun EditorGestureReceiver(
                         gestureState.initialTimestamp = System.currentTimeMillis()
                         gestureState.insertPosition(down)
 
+                        // Track active pointers
+                        val activePointers = mutableListOf<PointerInputChange>()
+                        activePointers.add(down)
+
+                        // Variables for pinch detection
+                        var previousDistance = 0f
+                        var initialDistance = 0f
+
                         do {
-                            // wait for second gesture
+                            // wait for next events
                             val event = withTimeoutOrNull(1000L) { awaitPointerEvent() }
 
                             if (event != null) {
-                                val fingerChange =
-                                    event.changes.filter { it.type == PointerType.Touch }
+                                val fingerChange = event.changes.filter { it.type == PointerType.Touch }
 
                                 // is already consumed return
                                 if (fingerChange.find { it.isConsumed } != null) {
@@ -119,39 +135,119 @@ fun EditorGestureReceiver(
                                     rectangleBounds = null
                                     return@awaitEachGesture
                                 }
+
+                                // Update active pointers list
+                                activePointers.clear()
                                 fingerChange.forEach { change ->
-                                    // Consume changes and update positions
-                                    change.consume()
-                                    gestureState.insertPosition(change)
+                                    if (change.pressed) {
+                                        activePointers.add(change)
+                                    }
                                 }
-                                if (fingerChange.any { !it.pressed }) {
-                                    gestureState.lastTimestamp = System.currentTimeMillis()
-                                    break
-                                }
-                            }
-                            // events are only send on change, so we need to check for holding in place separately
-                            gestureState.lastTimestamp = System.currentTimeMillis()
-                            if (isSelection) {
-                                crossPosition = gestureState.getLastPositionIO()
-                                rectangleBounds = gestureState.calculateRectangleBounds()
-                            } else if (gestureState.getElapsedTime() >= HOLD_THRESHOLD_MS && gestureState.getInputCount() == 1) {
-                                if (gestureState.calculateTotalDelta() < TAP_MOVEMENT_TOLERANCE) {
-                                    isSelection = true
-                                    crossPosition = gestureState.getLastPositionIO()
-                                    rectangleBounds = gestureState.calculateRectangleBounds()
+
+                                // Check for pinch gesture when we have exactly 2 pointers
+                                if (activePointers.size == 2) {
+                                    // Calculate distance between two fingers
+                                    val currentDistance = calculateDistance(
+                                        activePointers[0].position,
+                                        activePointers[1].position
+                                    )
+
+                                    // Initialize distances if this is the start of a potential pinch
+                                    if (previousDistance == 0f) {
+                                        previousDistance = currentDistance
+                                        initialDistance = currentDistance
+                                    }
+
+                                    // Calculate the zoom ratio between current and previous distance
+                                    val zoomRatio = currentDistance / previousDistance
+
+                                    // Check if the change is significant enough to be a pinch
+                                    if (abs(zoomRatio - 1f) > PINCH_GESTURE_THRESHOLD) {
+                                        // This is a pinch gesture!
+                                        isPinchZooming = true
+
+                                        // Calculate new zoom scale
+                                        val newZoomScale = (state.zoomScale * zoomRatio)
+                                            .coerceIn(state.minZoom, state.maxZoom)
+
+                                        // Only update if there's a meaningful change
+                                        if (abs(newZoomScale - state.zoomScale) > 0.01f) {
+                                            state.zoomScale = newZoomScale
+                                            state.normalizeZoom()
+
+                                            // Refresh the UI to reflect zoom changes
+                                            coroutineScope.launch {
+                                                DrawCanvas.refreshUi.emit(Unit)
+                                            }
+                                        }
+
+                                        // Consume the changes to prevent other gesture handling
+                                        fingerChange.forEach { it.consume() }
+
+                                        // Update previous distance for next calculation
+                                        previousDistance = currentDistance
+                                    }
+                                } else if (isPinchZooming && activePointers.size < 2) {
+                                    // End of pinch gesture
+                                    isPinchZooming = false
+
+                                    // Show a brief notification of the zoom level
                                     coroutineScope.launch {
-                                        state.isDrawing = false
                                         SnackState.globalSnackFlow.emit(
                                             SnackConf(
-                                                text = "Selection mode!",
-                                                duration = 1500,
+                                                text = "Zoom: ${(state.zoomScale * 100).toInt()}%",
+                                                duration = 1000
                                             )
                                         )
                                     }
                                 }
 
+                                // If not in a pinch gesture, handle changes normally
+                                if (!isPinchZooming) {
+                                    fingerChange.forEach { change ->
+                                        change.consume()
+                                        gestureState.insertPosition(change)
+                                    }
+                                }
+
+                                if (fingerChange.any { !it.pressed }) {
+                                    gestureState.lastTimestamp = System.currentTimeMillis()
+                                    break
+                                }
+                            }
+
+                            // events are only send on change, so we need to check for holding in place separately
+                            gestureState.lastTimestamp = System.currentTimeMillis()
+
+                            // Skip selection handling if we're in a pinch gesture
+                            if (!isPinchZooming) {
+                                if (isSelection) {
+                                    crossPosition = gestureState.getLastPositionIO()
+                                    rectangleBounds = gestureState.calculateRectangleBounds()
+                                } else if (gestureState.getElapsedTime() >= HOLD_THRESHOLD_MS
+                                    && gestureState.getInputCount() == 1) {
+                                    if (gestureState.calculateTotalDelta() < TAP_MOVEMENT_TOLERANCE) {
+                                        isSelection = true
+                                        crossPosition = gestureState.getLastPositionIO()
+                                        rectangleBounds = gestureState.calculateRectangleBounds()
+                                        coroutineScope.launch {
+                                            state.isDrawing = false
+                                            SnackState.globalSnackFlow.emit(
+                                                SnackConf(
+                                                    text = "Selection mode!",
+                                                    duration = 1500,
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         } while (true)
+
+                        // Skip further gesture processing if this was a pinch gesture
+                        if (isPinchZooming) {
+                            return@awaitEachGesture
+                        }
 
                         if (isSelection) {
                             resolveGesture(
@@ -168,6 +264,7 @@ fun EditorGestureReceiver(
                             rectangleBounds = null
                             return@awaitEachGesture
                         }
+
                         // Calculate the total delta (movement distance) for all pointers
                         val totalDelta = gestureState.calculateTotalDelta()
                         val gestureDuration = gestureState.getElapsedTime()
@@ -206,6 +303,22 @@ fun EditorGestureReceiver(
                                             )
                                             return@withTimeoutOrNull null
                                         }
+
+                                        // Add double-tap to reset zoom
+                                        if (state.zoomScale != 1.0f) {
+                                            state.resetZoom()
+                                            coroutineScope.launch {
+                                                DrawCanvas.refreshUi.emit(Unit)
+                                                SnackState.globalSnackFlow.emit(
+                                                    SnackConf(
+                                                        text = "Zoom reset to 100%",
+                                                        duration = 1000,
+                                                    )
+                                                )
+                                            }
+                                            return@withTimeoutOrNull Unit
+                                        }
+
                                         resolveGesture(
                                             settings = appSettings,
                                             default = AppSettings.defaultDoubleTapAction,
@@ -215,8 +328,6 @@ fun EditorGestureReceiver(
                                             previousPage = goToPreviousPage,
                                             nextPage = goToNextPage,
                                         )
-
-
                                     } != null) return@awaitEachGesture
                             }
                         } else if (gestureState.getInputCount() == 2) {
@@ -293,6 +404,13 @@ fun EditorGestureReceiver(
         // Draw the rectangle while dragging
         DrawRectangle(rectangleBounds, density)
     }
+}
+
+/**
+ * Calculate distance between two points
+ */
+private fun calculateDistance(point1: Offset, point2: Offset): Float {
+    return hypot(point1.x - point2.x, point1.y - point2.y)
 }
 
 @Composable
@@ -391,4 +509,3 @@ private fun resolveGesture(
         }
     }
 }
-

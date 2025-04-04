@@ -31,7 +31,6 @@ import com.ethran.notable.utils.History
 import com.ethran.notable.utils.convertDpToPixel
 import io.shipbook.shipbooksdk.Log
 
-
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 @ExperimentalFoundationApi
@@ -88,6 +87,15 @@ fun EditorView(
 
         val appRepository = AppRepository(context)
 
+        // Reset zoom when navigating to a new page
+        LaunchedEffect(key1 = _pageId) {
+            // Make sure zoom is reset to default when changing pages
+            if (editorState.zoomScale != 1.0f) {
+                editorState.resetZoom()
+                DrawCanvas.refreshUi.emit(Unit)
+            }
+        }
+
         // update opened page
         LaunchedEffect(Unit) {
             if (_bookId != null) {
@@ -120,6 +128,14 @@ fun EditorView(
                     penSettings = editorState.penSettings
                 )
             )
+        }
+
+        // Reset zoom when changing drawing mode for better user experience
+        LaunchedEffect(editorState.mode) {
+            if (editorState.zoomScale != 1.0f) {
+                editorState.resetZoom()
+                DrawCanvas.refreshUi.emit(Unit)
+            }
         }
 
         val lastRoute = navController.previousBackStackEntry

@@ -115,9 +115,53 @@ class DrawCanvas(
         override fun onRawDrawingTouchPointMoveReceived(p0: TouchPoint?) {
         }
 
+        /**
+         * Handle drawing input from the stylus, adjusting for zoom if necessary.
+         * When zoomed, touch coordinates need to be transformed to match the document coordinates.
+         */
         override fun onRawDrawingTouchPointListReceived(plist: TouchPointList) {
             val startTime = System.currentTimeMillis()
             Log.d(TAG, "onRawDrawingTouchPointListReceived started")
+
+            // When zoomed, we need to transform the touch points
+            val adjustedPoints = if (state.zoomScale != 1.0f) {
+                // Create a new touch point list with transformed coordinates
+                TouchPointList().apply {
+                    val centerX = this@DrawCanvas.width / 2f
+                    val centerY = this@DrawCanvas.height / 2f
+
+                    for (point in plist.points) {
+                        // Adjust for zoom by reversing the zoom transformation
+                        // First translate to make the center the origin
+                        val relativeX = point.x - centerX
+                        val relativeY = point.y - centerY
+
+                        // Scale by the inverse of the zoom factor
+                        val scaledX = relativeX / state.zoomScale
+                        val scaledY = relativeY / state.zoomScale
+
+                        // Translate back to original coordinate system
+                        val adjustedX = scaledX + centerX
+                        val adjustedY = scaledY + centerY
+
+                        // Create a new touch point with the adjusted coordinates
+                        val adjustedPoint = TouchPoint(
+                            adjustedX,
+                            adjustedY,
+                            point.pressure,
+                            point.size,
+                            point.tiltX,
+                            point.tiltY,
+                            point.timestamp
+                        )
+
+                        this.add(adjustedPoint)
+                    }
+                }
+            } else {
+                // When not zoomed, use the original points
+                plist
+            }
 
             // Check if any point is in a non-drawable area (gap between pages)
             if (page.usePagination) {
@@ -125,7 +169,7 @@ class DrawCanvas(
                 val pageGap = PaginationConstants.PAGE_GAP
 
                 // Check each touch point to see if it falls in a gap
-                for (point in plist.points) {
+                for (point in adjustedPoints.points) {
                     val y = point.y + page.scroll
                     val page_num = y / (pageHeight + pageGap)
                     val page_relative_y = y - page_num * (pageHeight + pageGap)
@@ -138,13 +182,7 @@ class DrawCanvas(
                 }
             }
 
-            // Sometimes UI will get refreshed and frozen before we draw all the strokes.
-            // I think, its because of doing it in separate thread. Commented it for now, to
-            // observe app behavior, and determine if it fixed this bug,
-            // as I do not know reliable way to reproduce it
-            // Need testing if it will be better to do in main thread on, in separate.
-            // thread(start = true, isDaemon = false, priority = Thread.MAX_PRIORITY) {
-
+            // Now use the adjusted touch points for drawing operations
             if (getActualState().mode == Mode.Draw) {
                 val newThread = System.currentTimeMillis()
                 Log.d(
@@ -152,28 +190,21 @@ class DrawCanvas(
                     "Got to new thread ${Thread.currentThread().name}, in ${newThread - startTime}}"
                 )
                 coroutineScope.launch(Dispatchers.Main.immediate) {
-                    // After each stroke ends, we draw it on our canvas.
-                    // This way, when screen unfreezes the strokes are shown.
-                    // When in scribble mode, ui want be refreshed.
-                    // If we UI will be refreshed and frozen before we manage to draw
-                    // strokes want be visible, so we need to ensure that it will be done
-                    // before anything else happens.
                     drawingInProgress.withLock {
                         val lock = System.currentTimeMillis()
                         Log.d(TAG, "lock obtained in ${lock - startTime} ms")
 
-//                        Thread.sleep(1000)
+                        // Use the adjusted points for drawing
                         handleDraw(
                             this@DrawCanvas.page,
                             strokeHistoryBatch,
                             getActualState().penSettings[getActualState().pen.penName]!!.strokeSize,
                             getActualState().penSettings[getActualState().pen.penName]!!.color,
                             getActualState().pen,
-                            plist.points
+                            adjustedPoints.points
                         )
                         val drawEndTime = System.currentTimeMillis()
                         Log.d(TAG, "Drawing operation took ${drawEndTime - startTime} ms")
-
                     }
                     coroutineScope.launch {
                         commitHistorySignal.emit(Unit)
@@ -184,14 +215,26 @@ class DrawCanvas(
                         TAG,
                         "onRawDrawingTouchPointListReceived completed in ${endTime - startTime} ms"
                     )
-
                 }
             } else thread {
                 if (getActualState().mode == Mode.Erase) {
+                    // For eraser, also adjust touch points for zoom
+                    val adjustedErasePoints = if (state.zoomScale != 1.0f) {
+                        val centerX = this@DrawCanvas.width / 2f
+                        val centerY = this@DrawCanvas.height / 2f
+
+                        adjustedPoints.points.map { point ->
+                            // Create SimplePointF with adjusted coordinates
+                            SimplePointF(point.x, point.y + page.scroll)
+                        }
+                    } else {
+                        plist.points.map { SimplePointF(it.x, it.y + page.scroll) }
+                    }
+
                     handleErase(
                         this@DrawCanvas.page,
                         history,
-                        plist.points.map { SimplePointF(it.x, it.y + page.scroll) },
+                        adjustedErasePoints,
                         eraser = getActualState().eraser
                     )
                     drawCanvasToView()
@@ -199,11 +242,21 @@ class DrawCanvas(
                 }
 
                 if (getActualState().mode == Mode.Select) {
+                    // For select mode, also adjust touch points for zoom
+                    val adjustedSelectPoints = if (state.zoomScale != 1.0f) {
+                        adjustedPoints.points.map { point ->
+                            SimplePointF(point.x, point.y + page.scroll)
+                        }
+                    } else {
+                        plist.points.map { SimplePointF(it.x, it.y + page.scroll) }
+                    }
+
                     handleSelect(
                         coroutineScope,
                         this@DrawCanvas.page,
                         getActualState(),
-                        plist.points.map { SimplePointF(it.x, it.y + page.scroll) })
+                        adjustedSelectPoints
+                    )
                     drawCanvasToView()
                     refreshUi()
                 }
@@ -211,8 +264,8 @@ class DrawCanvas(
                 if (getActualState().mode == Mode.Line) {
                     // Check if line would cross a gap between pages
                     val shouldDrawLine = if (page.usePagination) {
-                        val firstPoint = plist.points.first()
-                        val lastPoint = plist.points.last()
+                        val firstPoint = adjustedPoints.points.first()
+                        val lastPoint = adjustedPoints.points.last()
 
                         // Convert to page-relative coordinates
                         val firstY = firstPoint.y + page.scroll
@@ -237,7 +290,7 @@ class DrawCanvas(
                             strokeSize = getActualState().penSettings[getActualState().pen.penName]!!.strokeSize,
                             color = getActualState().penSettings[getActualState().pen.penName]!!.color,
                             pen = getActualState().pen,
-                            touchPoints = plist.points
+                            touchPoints = adjustedPoints.points  // Use the adjusted points
                         )
                         //make it visible
                         drawCanvasToView()
@@ -246,6 +299,7 @@ class DrawCanvas(
                 }
             }
         }
+
 
 
         override fun onBeginRawErasing(p0: Boolean, p1: TouchPoint?) {
@@ -321,13 +375,10 @@ class DrawCanvas(
                 }
             }
         }
-
         this.holder.addCallback(surfaceCallback)
-
     }
 
     fun registerObservers() {
-
         // observe forceUpdate
         coroutineScope.launch {
             forceUpdate.collect { zoneAffected ->
@@ -466,8 +517,99 @@ class DrawCanvas(
                 commitCompletion.complete(Unit)
             }
         }
-
     }
+
+    /**
+     * Updates the drawableRects to respect zoom level.
+     * When zoomed out, this restricts drawing area to ensure users can't draw outside normal margins.
+     *
+     * @param exclusionHeight Height of area excluded from drawing (e.g., toolbar)
+     */
+    fun updateDrawableAreas(exclusionHeight: Int) {
+        drawableRects.clear()
+
+        if (page.usePagination) {
+            val pageHeight = page.pageHeight
+            val pageGap = PaginationConstants.PAGE_GAP
+            val scroll = page.scroll
+            val visibleHeight = page.viewHeight
+
+            // Calculate which pages are in view considering the current scroll position
+            val firstVisiblePage = (scroll / (pageHeight + pageGap)).toInt()
+            val lastVisiblePage = ((scroll + visibleHeight) / (pageHeight + pageGap)).toInt() + 1
+
+            // Create a limit rect for each visible page
+            for (pageNum in firstVisiblePage..lastVisiblePage) {
+                // Calculate page top and bottom in screen coordinates (accounting for scroll)
+                val pageTopInDoc = pageNum * (pageHeight + pageGap)
+                val pageBottomInDoc = pageTopInDoc + pageHeight
+
+                // Convert to screen coordinates
+                val pageTopOnScreen = pageTopInDoc - scroll
+                val pageBottomOnScreen = pageBottomInDoc - scroll
+
+                // Only include if the page is visible (not completely off-screen)
+                if (pageBottomOnScreen > 0 && pageTopOnScreen < visibleHeight) {
+                    // Adjust for toolbar and screen bounds
+                    val adjustedTop = maxOf(pageTopOnScreen, exclusionHeight)
+                    val adjustedBottom = minOf(pageBottomOnScreen, visibleHeight)
+
+                    // Only add if there's actually drawable area (not just toolbar)
+                    if (adjustedBottom > adjustedTop) {
+                        drawableRects.add(Rect(0, adjustedTop, page.viewWidth, adjustedBottom))
+                    }
+                }
+            }
+
+            // If no drawable areas were created (edge case), create a default one
+            if (drawableRects.isEmpty()) {
+                drawableRects.add(Rect(0, exclusionHeight, page.viewWidth, page.viewHeight))
+                Log.w(TAG, "No drawable areas found, using default")
+            }
+        } else {
+            // Without pagination, just one drawable area for the whole surface
+            drawableRects.add(Rect(0, exclusionHeight, page.viewWidth, page.viewHeight))
+        }
+
+        // When zoomed out (scale < 1.0), restrict the drawable area to prevent drawing outside normal margins
+        if (state.zoomScale < 1.0f) {
+            val newDrawableRects = mutableListOf<Rect>()
+
+            for (rect in drawableRects) {
+                // Calculate the center of the screen
+                val centerX = page.viewWidth / 2
+                val centerY = (page.viewHeight - exclusionHeight) / 2 + exclusionHeight
+
+                // Calculate the visible area at the current zoom level
+                val visibleWidth = (page.viewWidth * state.zoomScale).toInt()
+                val visibleHeight = ((page.viewHeight - exclusionHeight) * state.zoomScale).toInt()
+
+                // Calculate the adjusted rect, accounting for zoom
+                val adjustedRect = Rect(
+                    centerX - visibleWidth / 2,  // Left
+                    maxOf(centerY - visibleHeight / 2, exclusionHeight),  // Top
+                    centerX + visibleWidth / 2,  // Right
+                    centerY + visibleHeight / 2   // Bottom
+                )
+
+                // Intersect with the original rect to get the final drawable area
+                val finalRect = Rect(rect)
+                finalRect.intersect(adjustedRect)
+
+                // Only add the rect if it's valid
+                if (finalRect.width() > 0 && finalRect.height() > 0) {
+                    newDrawableRects.add(finalRect)
+                }
+            }
+
+            // Replace with the adjusted rects
+            if (newDrawableRects.isNotEmpty()) {
+                drawableRects.clear()
+                drawableRects.addAll(newDrawableRects)
+            }
+        }
+    }
+
 
     private suspend fun selectRectangle(rectToSelect: Rect?) {
         if (rectToSelect != null) {
@@ -623,9 +765,35 @@ class DrawCanvas(
     }
 
 
+    /**
+     * Draws the canvas to view, applying zoom transformations if needed.
+     * This displays the current canvas content on screen with proper zoom level.
+     */
     fun drawCanvasToView() {
         val canvas = this.holder.lockCanvas() ?: return
+
+        // Clear the canvas
+        canvas.drawColor(Color.WHITE)
+
+        // Apply zoom transformation if not at 100%
+        if (state.zoomScale != 1.0f) {
+            // Save the canvas state before transformations
+            canvas.save()
+
+            // Find the center point of the view
+            val centerX = page.viewWidth / 2f
+            val centerY = page.viewHeight / 2f
+
+            // Apply zoom transformation centered on the view
+            canvas.translate(centerX, centerY)
+            canvas.scale(state.zoomScale, state.zoomScale)
+            canvas.translate(-centerX, -centerY)
+        }
+
+        // Draw the main content bitmap
         canvas.drawBitmap(page.windowedBitmap, 0f, 0f, Paint())
+
+        // Draw selection if in select mode
         if (getActualState().mode == Mode.Select) {
             // render selection
             if (getActualState().selectionState.firstPageCut != null) {
@@ -638,9 +806,44 @@ class DrawCanvas(
                 canvas.drawPath(path, selectPaint)
             }
         }
-        // finish rendering
+
+        // Restore canvas state if zoom was applied
+        if (state.zoomScale != 1.0f) {
+            canvas.restore()
+
+            // Show zoom indicator in top-right corner
+            val zoomText = "${(state.zoomScale * 100).toInt()}%"
+            val textPaint = Paint().apply {
+                color = Color.BLACK
+                textSize = 28f
+                textAlign = Paint.Align.RIGHT
+            }
+
+            // Draw zoom indicator background
+            val textX = canvas.width - 20f
+            val textY = 40f
+            val textWidth = textPaint.measureText(zoomText)
+            val textBgPaint = Paint().apply {
+                color = Color.WHITE
+                style = Paint.Style.FILL
+            }
+
+            canvas.drawRect(
+                textX - textWidth - 10,
+                textY - 30,
+                textX + 10,
+                textY + 10,
+                textBgPaint
+            )
+
+            // Draw zoom text
+            canvas.drawText(zoomText, textX, textY, textPaint)
+        }
+
+        // Finish rendering
         this.holder.unlockCanvasAndPost(canvas)
     }
+
 
     private suspend fun updateIsDrawing() {
         Log.i(TAG, "Update is drawing: ${state.isDrawing}")
@@ -654,6 +857,7 @@ class DrawCanvas(
             touchHelper.setRawDrawingEnabled(false)
         }
     }
+
 
     fun updatePenAndStroke() {
         Log.i(TAG, "Update pen and stroke")
@@ -695,7 +899,7 @@ class DrawCanvas(
         updateDrawableAreas(exclusionHeight)
 
         // Set exclude rect for toolbar
-        val toolbarExcludeRect = Rect(0, 0, this.width, exclusionHeight)
+        val toolbarExcludeRect = Rect(0, 0, page.viewWidth, exclusionHeight)
 
         if (page.usePagination) {
             // For pagination, set each page as a separate limit rect
@@ -707,7 +911,7 @@ class DrawCanvas(
             touchHelper.setLimitRect(
                 mutableListOf(
                     Rect(
-                        0, 0, this.width, this.height
+                        0, 0, page.viewWidth, page.viewHeight
                     )
                 )
             ).setExcludeRect(listOf(toolbarExcludeRect))
@@ -720,51 +924,5 @@ class DrawCanvas(
         refreshUi()
     }
 
-    // Update drawable areas based on pagination settings AND current scroll position
-    private fun updateDrawableAreas(exclusionHeight: Int) {
-        drawableRects.clear()
 
-        if (page.usePagination) {
-            val pageHeight = page.pageHeight
-            val pageGap = PaginationConstants.PAGE_GAP
-            val scroll = page.scroll
-            val visibleHeight = this.height
-
-            // Calculate which pages are in view considering the current scroll position
-            val firstVisiblePage = (scroll / (pageHeight + pageGap)).toInt()
-            val lastVisiblePage = ((scroll + visibleHeight) / (pageHeight + pageGap)).toInt() + 1
-
-            // Create a limit rect for each visible page
-            for (pageNum in firstVisiblePage..lastVisiblePage) {
-                // Calculate page top and bottom in screen coordinates (accounting for scroll)
-                val pageTopInDoc = pageNum * (pageHeight + pageGap)
-                val pageBottomInDoc = pageTopInDoc + pageHeight
-
-                // Convert to screen coordinates
-                val pageTopOnScreen = pageTopInDoc - scroll
-                val pageBottomOnScreen = pageBottomInDoc - scroll
-
-                // Only include if the page is visible (not completely off-screen)
-                if (pageBottomOnScreen > 0 && pageTopOnScreen < visibleHeight) {
-                    // Adjust for toolbar and screen bounds
-                    val adjustedTop = maxOf(pageTopOnScreen, exclusionHeight)
-                    val adjustedBottom = minOf(pageBottomOnScreen, visibleHeight)
-
-                    // Only add if there's actually drawable area (not just toolbar)
-                    if (adjustedBottom > adjustedTop) {
-                        drawableRects.add(Rect(0, adjustedTop, this.width, adjustedBottom))
-                    }
-                }
-            }
-
-            // If no drawable areas were created (edge case), create a default one
-            if (drawableRects.isEmpty()) {
-                drawableRects.add(Rect(0, exclusionHeight, this.width, this.height))
-                Log.w(TAG, "No drawable areas found, using default")
-            }
-        } else {
-            // Without pagination, just one drawable area for the whole surface
-            drawableRects.add(Rect(0, exclusionHeight, this.width, this.height))
-        }
-    }
 }

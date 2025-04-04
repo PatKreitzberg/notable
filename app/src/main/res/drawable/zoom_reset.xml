@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+android:width="24dp"
+android:height="24dp"
+android:viewportWidth="24"
+android:viewportHeight="24">
+
+<!-- Magnifying glass circle -->
+<path
+    android:fillColor="#00000000"
+    android:strokeColor="#000000"
+    android:strokeWidth="2"
+    android:pathData="M10,10m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+
+<!-- Handle -->
+<path
+    android:fillColor="#00000000"
+    android:strokeColor="#000000"
+    android:strokeWidth="2"
+    android:pathData="M15,15L21,21" />
+
+<!-- 100% text -->
+<path
+    android:fillColor="#000000"
+    android:pathData="M6,10.5L6,9.5L7,9.5L7,10.5L6,10.5ZM9,10.5L9,9.5L10,9.5L10,10.5L9,10.5ZM12,10.5L12,9.5L13,9.5L13,10.5L12,10.5Z" />
+
+<!-- Reset arrows in a circle -->
+<path
+    android:fillColor="#00000000"
+    android:strokeColor="#000000"
+    android:strokeWidth="1.5"
+    android:pathData="M19,6m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+
+<path
+    android:fillColor="#000000"
+    android:pathData="M19,4.5C18.2,4.5 17.5,5 17.25,5.75L16,5L17.25,6.25L18.5,7.5L19.75,6.25L21,5L19.75,5.75C20,5 20.8,4.5 21.5,4.5" />
+</vector>

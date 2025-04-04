@@ -1,6 +1,5 @@
 package com.ethran.notable.components
 
-
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -36,6 +35,8 @@ import androidx.navigation.NavController
 import com.ethran.notable.R
 import com.ethran.notable.classes.AppRepository
 import com.ethran.notable.classes.DrawCanvas
+import com.ethran.notable.classes.SnackConf
+import com.ethran.notable.classes.SnackState
 import com.ethran.notable.db.KvProxy
 import com.ethran.notable.modals.AppSettings
 import com.ethran.notable.modals.PageSettingsModal
@@ -337,6 +338,32 @@ fun Toolbar(
                         .width(0.5.dp)
                         .background(Color.Black)
                 )
+
+                ToolbarButton(
+                    onSelect = {
+                        // Reset zoom to 100%
+                        state.resetZoom()
+                        scope.launch {
+                            DrawCanvas.refreshUi.emit(Unit)
+                            SnackState.globalSnackFlow.emit(
+                                SnackConf(
+                                    text = "Zoom reset to 100%",
+                                    duration = 1000,
+                                )
+                            )
+                        }
+                    },
+                    iconId = R.drawable.zoom_reset,
+                    contentDescription = "reset zoom"
+                )
+
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(0.5.dp)
+                        .background(Color.Black)
+                )
+
 
                 ToolbarButton(
                     onSelect = {
