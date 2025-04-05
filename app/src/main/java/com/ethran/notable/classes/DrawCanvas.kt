@@ -65,7 +65,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.thread
-
+import android.graphics.DashPathEffect
+import android.graphics.Path
 
 val pressure = EpdController.getMaxTouchPressure()
 
@@ -850,6 +851,8 @@ class DrawCanvas(
             canvas.translate(-centerX, -centerY)
         }
 
+
+
         // Draw background first
         if (page.usePagination) {
             // Create a clip region for the visible area to limit what we draw
@@ -900,6 +903,8 @@ class DrawCanvas(
                 canvas.drawPath(path, selectPaint)
             }
         }
+
+
 
         // Restore canvas state if zoom was applied
         if (state.zoomScale != 1.0f) {
