@@ -123,7 +123,7 @@ fun Library(navController: NavController, folderId: String? = null) {
                 Spacer(modifier = Modifier.weight(1f))
                 Icon(
                     imageVector = FeatherIcons.Cloud,
-                    contentDescription = "Google Drive Sync",
+                    contentDescription = "Google Drive Sync & Backup",
                     Modifier
                         .padding(8.dp)
                         .noRippleClickable {

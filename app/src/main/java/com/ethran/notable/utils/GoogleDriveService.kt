@@ -24,12 +24,14 @@ import java.util.Locale
 
 /**
  * Service class to handle Google Drive operations with synchronization
+ * Keeps both a current sync file and a backup of the previous sync
  */
 class GoogleDriveService(private val context: Context) {
 
     companion object {
         private const val APP_FOLDER_NAME = "Notable Database Backups"
         private const val SYNC_FILE_NAME = "notable_database_sync.db"
+        private const val SYNC_BACKUP_FILE_NAME = "notable_database_sync_backup.db"
         private const val MIME_TYPE_FOLDER = "application/vnd.google-apps.folder"
         private const val MIME_TYPE_DB = "application/octet-stream"
     }
@@ -79,6 +81,7 @@ class GoogleDriveService(private val context: Context) {
 
     /**
      * Synchronize database to Google Drive
+     * Keeps both current sync and a backup of the previous sync
      * @return Success or error message
      */
     suspend fun backupDatabase(): String = withContext(Dispatchers.IO) {
@@ -95,19 +98,46 @@ class GoogleDriveService(private val context: Context) {
             val folderId = findOrCreateAppFolder(driveService)
                 ?: return@withContext "Failed to create backup folder"
 
-            // Check if sync file already exists
-            val existingFileId = findSyncFile(driveService, folderId)
+            // Check if current sync file exists
+            val existingSyncFileId = findSyncFile(driveService, folderId)
+            // Check if backup sync file exists
+            val existingBackupFileId = findSyncFile(driveService, folderId, true)
+
             val mediaContent = FileContent(MIME_TYPE_DB, dbFile)
+            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
 
-            if (existingFileId != null) {
-                // Update existing file
-                driveService.files().update(existingFileId, null, mediaContent).execute()
+            if (existingSyncFileId != null) {
+                // First, save the current sync as backup
+                if (existingBackupFileId != null) {
+                    // Update existing backup file by copying content from current sync
+                    driveService.files().copy(
+                        existingSyncFileId,
+                        com.google.api.services.drive.model.File().apply { name = SYNC_BACKUP_FILE_NAME }
+                    ).execute()
+                } else {
+                    // Create new backup file by copying the current sync
+                    val backupMetadata = com.google.api.services.drive.model.File().apply {
+                        name = SYNC_BACKUP_FILE_NAME
+                        parents = listOf(folderId)
+                    }
 
-                // Get the current timestamp for the log message
-                val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                    .format(Date())
+                    // Get current sync file content
+                    val tempFile = File(context.cacheDir, "temp_current_sync.db")
+                    driveService.files().get(existingSyncFileId)
+                        .executeMediaAndDownloadTo(FileOutputStream(tempFile))
 
-                return@withContext "Database synchronized successfully at $timestamp"
+                    // Upload as backup
+                    val backupMediaContent = FileContent(MIME_TYPE_DB, tempFile)
+                    driveService.files().create(backupMetadata, backupMediaContent).execute()
+
+                    // Clean up temp file
+                    tempFile.delete()
+                }
+
+                // Now update the current sync file with new content
+                driveService.files().update(existingSyncFileId, null, mediaContent).execute()
+
+                return@withContext "Database synchronized successfully at $timestamp (Previous sync saved as backup)"
             } else {
                 // Create new sync file
                 val fileMetadata = com.google.api.services.drive.model.File().apply {
@@ -125,22 +155,27 @@ class GoogleDriveService(private val context: Context) {
     }
 
     /**
-     * Restore database from synchronized Google Drive backup
+     * Restore database from Google Drive (either current sync or backup sync)
+     * @param useBackup Whether to restore from the backup sync instead of the current sync
      * @return Success or error message
      */
-    suspend fun restoreDatabase(): String = withContext(Dispatchers.IO) {
+    suspend fun restoreDatabase(useBackup: Boolean = false): String = withContext(Dispatchers.IO) {
         try {
             val driveService = getDriveService() ?: return@withContext "Not signed in with Google"
 
             // Find app folder
             val folderId = findAppFolder(driveService) ?: return@withContext "No backup folder found"
 
-            // Find sync file
-            val syncFileId = findSyncFile(driveService, folderId)
-                ?: return@withContext "No synchronized backup found"
+            // Find requested sync file
+            val syncFileId = findSyncFile(driveService, folderId, useBackup)
+                ?: if (useBackup) {
+                    return@withContext "No backup sync file found"
+                } else {
+                    return@withContext "No synchronized database found"
+                }
 
-            // Download backup file
-            val tempFile = File(context.cacheDir, "temp_backup.db")
+            // Download the selected file
+            val tempFile = File(context.cacheDir, "temp_restore.db")
             driveService.files().get(syncFileId)
                 .executeMediaAndDownloadTo(FileOutputStream(tempFile))
 
@@ -155,10 +190,26 @@ class GoogleDriveService(private val context: Context) {
             // Reopen database
             AppDatabase.getDatabase(context)
 
-            return@withContext "Database restored successfully from synchronized backup"
+            val source = if (useBackup) "backup sync" else "current sync"
+            return@withContext "Database restored successfully from $source"
         } catch (e: Exception) {
             Log.e(TAG, "Error restoring database", e)
             return@withContext "Error: ${e.message}"
+        }
+    }
+
+    /**
+     * Check if a backup sync file exists
+     * @return true if a backup sync file exists
+     */
+    suspend fun backupSyncExists(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val driveService = getDriveService() ?: return@withContext false
+            val folderId = findAppFolder(driveService) ?: return@withContext false
+            return@withContext findSyncFile(driveService, folderId, true) != null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking backup sync existence", e)
+            return@withContext false
         }
     }
 
@@ -211,17 +262,18 @@ class GoogleDriveService(private val context: Context) {
     /**
      * Find sync file in Google Drive
      */
-    private fun findSyncFile(driveService: Drive, folderId: String): String? {
+    private fun findSyncFile(driveService: Drive, folderId: String, isBackup: Boolean = false): String? {
+        val fileName = if (isBackup) SYNC_BACKUP_FILE_NAME else SYNC_FILE_NAME
         try {
             val result = driveService.files().list()
-                .setQ("name = '$SYNC_FILE_NAME' and '$folderId' in parents and trashed = false")
+                .setQ("name = '$fileName' and '$folderId' in parents and trashed = false")
                 .setSpaces("drive")
                 .setFields("files(id)")
                 .execute()
 
             return if (result.files.isNotEmpty()) result.files[0].id else null
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to find sync file", e)
+            Log.e(TAG, "Failed to find sync file: $fileName", e)
             return null
         }
     }

@@ -52,6 +52,8 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
     var isSignedIn by remember { mutableStateOf(driveService.isUserSignedIn()) }
     var isLoading by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf("") }
+    var backupSyncExists by remember { mutableStateOf(false) }
+    var showRestoreOptions by remember { mutableStateOf(false) }
 
     // Sign-in launcher
     val signInLauncher = rememberLauncherForActivityResult(
@@ -68,6 +70,8 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
                         snackManager.displaySnack(
                             SnackConf(text = "Google sign-in successful", duration = 2000)
                         )
+                        // Check if backup sync exists
+                        backupSyncExists = driveService.backupSyncExists()
                     }
                 }
             } catch (e: ApiException) {
@@ -81,9 +85,12 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
         }
     }
 
-    // Check sign-in status on load
+    // Check sign-in status and backup existence on load
     LaunchedEffect(Unit) {
         isSignedIn = driveService.isUserSignedIn()
+        if (isSignedIn) {
+            backupSyncExists = driveService.backupSyncExists()
+        }
     }
 
     Dialog(onDismissRequest = onClose) {
@@ -98,6 +105,14 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
                 text = "Google Drive Synchronization",
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // Explanation of sync system
+            Text(
+                text = "This system maintains both your current database sync and a backup copy " +
+                        "of your previous sync for added safety.",
+                color = Color.Gray,
+                modifier = Modifier.padding(bottom = 8.dp)
             )
 
             // Status message
@@ -159,48 +174,131 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
 
             // Sync and restore buttons (only enabled when signed in)
             if (isSignedIn) {
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    ActionButton(
-                        text = "Sync Now",
-                        onClick = {
-                            scope.launch {
-                                isLoading = true
-                                statusMessage = "Synchronizing database..."
+                // Show main buttons when not showing restore options
+                if (!showRestoreOptions) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        ActionButton(
+                            text = "Sync Now",
+                            onClick = {
+                                scope.launch {
+                                    isLoading = true
+                                    statusMessage = "Synchronizing database..."
 
-                                val result = driveService.backupDatabase()
+                                    val result = driveService.backupDatabase()
 
-                                isLoading = false
-                                statusMessage = result
+                                    // Update backup sync status after syncing
+                                    backupSyncExists = driveService.backupSyncExists()
+                                    isLoading = false
+                                    statusMessage = result
 
-                                snackManager.displaySnack(
-                                    SnackConf(text = result, duration = 3000)
-                                )
-                            }
-                        },
-                    )
+                                    snackManager.displaySnack(
+                                        SnackConf(text = result, duration = 3000)
+                                    )
+                                }
+                            },
+                        )
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
 
-                    ActionButton(
-                        text = "Restore",
-                        onClick = {
-                            scope.launch {
-                                isLoading = true
-                                statusMessage = "Restoring from sync..."
+                        ActionButton(
+                            text = "Restore",
+                            onClick = {
+                                // If we have a backup sync, show options
+                                if (backupSyncExists) {
+                                    showRestoreOptions = true
+                                } else {
+                                    // Otherwise restore directly from current sync
+                                    scope.launch {
+                                        isLoading = true
+                                        statusMessage = "Restoring from current sync..."
 
-                                val result = driveService.restoreDatabase()
+                                        val result = driveService.restoreDatabase(false)
 
-                                isLoading = false
-                                statusMessage = result
+                                        isLoading = false
+                                        statusMessage = result
 
-                                snackManager.displaySnack(
-                                    SnackConf(text = result, duration = 3000)
-                                )
-                            }
-                        },
-                    )
+                                        snackManager.displaySnack(
+                                            SnackConf(text = result, duration = 3000)
+                                        )
+                                    }
+                                }
+                            },
+                        )
+                    }
+                } else {
+                    // Show restore options
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Choose restore source:",
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            ActionButton(
+                                text = "Current Sync",
+                                onClick = {
+                                    scope.launch {
+                                        isLoading = true
+                                        statusMessage = "Restoring from current sync..."
+                                        showRestoreOptions = false
+
+                                        val result = driveService.restoreDatabase(false)
+
+                                        isLoading = false
+                                        statusMessage = result
+
+                                        snackManager.displaySnack(
+                                            SnackConf(text = result, duration = 3000)
+                                        )
+                                    }
+                                },
+                            )
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            ActionButton(
+                                text = "Backup Sync",
+                                onClick = {
+                                    scope.launch {
+                                        isLoading = true
+                                        statusMessage = "Restoring from backup sync..."
+                                        showRestoreOptions = false
+
+                                        val result = driveService.restoreDatabase(true)
+
+                                        isLoading = false
+                                        statusMessage = result
+
+                                        snackManager.displaySnack(
+                                            SnackConf(text = result, duration = 3000)
+                                        )
+                                    }
+                                },
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Cancel button
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            ActionButton(
+                                text = "Cancel",
+                                onClick = {
+                                    showRestoreOptions = false
+                                }
+                            )
+                        }
+                    }
                 }
             } else {
                 Text(
