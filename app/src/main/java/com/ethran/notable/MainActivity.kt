@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,18 +35,24 @@ import androidx.lifecycle.lifecycleScope
 import com.ethran.notable.classes.DrawCanvas
 import com.ethran.notable.classes.LocalSnackContext
 import com.ethran.notable.classes.SnackBar
+import com.ethran.notable.classes.SnackConf
 import com.ethran.notable.classes.SnackState
 import com.ethran.notable.datastore.EditorSettingCacheManager
 import com.ethran.notable.db.KvProxy
 import com.ethran.notable.modals.AppSettings
 import com.ethran.notable.modals.NeoTools
+import com.ethran.notable.modals.SyncConflictDialog
 import com.ethran.notable.ui.theme.InkaTheme
+import com.ethran.notable.utils.AutoSyncWorker
+import com.ethran.notable.utils.GoogleDriveService
+import com.ethran.notable.viewmodels.SyncViewModel
 import com.ethran.notable.views.Router
 import com.onyx.android.sdk.api.device.epd.EpdController
 import io.shipbook.shipbooksdk.Log
 import io.shipbook.shipbooksdk.ShipBook
 import kotlinx.coroutines.launch
-
+import androidx.activity.viewModels
+import androidx.compose.runtime.collectAsState
 
 var SCREEN_WIDTH = EpdController.getEpdHeight().toInt()
 var SCREEN_HEIGHT = EpdController.getEpdWidth().toInt()
@@ -56,10 +63,44 @@ var TAG = "MainActivity"
 @ExperimentalComposeUiApi
 @ExperimentalFoundationApi
 class MainActivity : ComponentActivity() {
+    private val syncViewModel by viewModels<SyncViewModel>()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableFullScreen()
         requestPermissions()
+
+        // Listen for sync conflicts
+        lifecycleScope.launch {
+            AutoSyncWorker.syncConflictFlow.collect {
+                syncViewModel.setSyncConflict(true)
+            }
+        }
+
+        // Listen for sync results
+        lifecycleScope.launch {
+            AutoSyncWorker.syncResultFlow.collect { result ->
+                // Show notification based on result
+                val message = when(result) {
+                    GoogleDriveService.AutoSyncResult.SUCCESS_UPLOADED ->
+                        "Auto-sync successful - uploaded to cloud"
+                    GoogleDriveService.AutoSyncResult.SUCCESS_DOWNLOADED ->
+                        "Auto-sync successful - downloaded from cloud"
+                    GoogleDriveService.AutoSyncResult.NOT_SIGNED_IN ->
+                        "Auto-sync skipped - not signed in"
+                    GoogleDriveService.AutoSyncResult.BACKUP_FAILED ->
+                        "Auto-sync failed - backup creation failed"
+                    GoogleDriveService.AutoSyncResult.ERROR ->
+                        "Auto-sync failed"
+                    else -> "Auto-sync status unknown"
+                }
+
+                this@MainActivity.lifecycleScope.launch {
+                    SnackState.globalSnackFlow.emit(
+                        SnackConf(text = message, duration = 3000)
+                    )
+                }
+            }
+        }
 
 
         ShipBook.start(
@@ -88,6 +129,13 @@ class MainActivity : ComponentActivity() {
 
         val intentData = intent.data?.lastPathSegment
         setContent {
+            val hasConflict = syncViewModel.syncConflictDetected.collectAsState().value
+
+            if (hasConflict) {
+                SyncConflictDialog(onClose = {
+                    syncViewModel.setSyncConflict(false)
+                })
+            }
             InkaTheme {
                 CompositionLocalProvider(LocalSnackContext provides snackState) {
                     Box(

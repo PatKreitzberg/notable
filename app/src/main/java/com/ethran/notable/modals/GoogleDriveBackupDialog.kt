@@ -36,6 +36,7 @@ import com.ethran.notable.TAG
 import com.ethran.notable.classes.LocalSnackContext
 import com.ethran.notable.classes.SnackConf
 import com.ethran.notable.utils.GoogleDriveService
+import com.ethran.notable.utils.noRippleClickable
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.common.api.ApiException
 import io.shipbook.shipbooksdk.Log
@@ -54,6 +55,8 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
     var statusMessage by remember { mutableStateOf("") }
     var backupSyncExists by remember { mutableStateOf(false) }
     var showRestoreOptions by remember { mutableStateOf(false) }
+
+    var showAutoSyncSettingsDialog by remember { mutableStateOf(false) }
 
     // Sign-in launcher
     val signInLauncher = rememberLauncherForActivityResult(
@@ -309,6 +312,22 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(Color.Black)
+            )
+
+            Box(
+                Modifier
+                    .padding(10.dp)
+                    .noRippleClickable {
+                        // Show auto-sync settings dialog
+                        showAutoSyncSettingsDialog = true
+                    }
+            ) { Text("Automatic Sync Settings") }
+
 
             // Close button
             Box(
@@ -321,5 +340,10 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
                 )
             }
         }
+    }
+    if (showAutoSyncSettingsDialog) {
+        AutoSyncSettingsDialog(onClose = {
+            showAutoSyncSettingsDialog = false
+        })
     }
 }
