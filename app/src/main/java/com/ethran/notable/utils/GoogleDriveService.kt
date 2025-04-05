@@ -23,12 +23,13 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Service class to handle Google Drive operations
+ * Service class to handle Google Drive operations with synchronization
  */
 class GoogleDriveService(private val context: Context) {
 
     companion object {
         private const val APP_FOLDER_NAME = "Notable Database Backups"
+        private const val SYNC_FILE_NAME = "notable_database_sync.db"
         private const val MIME_TYPE_FOLDER = "application/vnd.google-apps.folder"
         private const val MIME_TYPE_DB = "application/octet-stream"
     }
@@ -77,7 +78,7 @@ class GoogleDriveService(private val context: Context) {
     }
 
     /**
-     * Backup database to Google Drive
+     * Synchronize database to Google Drive
      * @return Success or error message
      */
     suspend fun backupDatabase(): String = withContext(Dispatchers.IO) {
@@ -94,33 +95,37 @@ class GoogleDriveService(private val context: Context) {
             val folderId = findOrCreateAppFolder(driveService)
                 ?: return@withContext "Failed to create backup folder"
 
-            // Create backup file name with timestamp
-            val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
-                .format(Date())
-            val backupName = "notable_backup_$timestamp.db"
-
-            // Create file metadata
-            val fileMetadata = com.google.api.services.drive.model.File().apply {
-                name = backupName
-                parents = listOf(folderId)
-            }
-
-            // Upload file content
+            // Check if sync file already exists
+            val existingFileId = findSyncFile(driveService, folderId)
             val mediaContent = FileContent(MIME_TYPE_DB, dbFile)
-            driveService.files().create(fileMetadata, mediaContent).execute()
 
-            // Cleanup old backups - keep only last 5
-            cleanupOldBackups(driveService, folderId)
+            if (existingFileId != null) {
+                // Update existing file
+                driveService.files().update(existingFileId, null, mediaContent).execute()
 
-            return@withContext "Database backup created successfully"
+                // Get the current timestamp for the log message
+                val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                    .format(Date())
+
+                return@withContext "Database synchronized successfully at $timestamp"
+            } else {
+                // Create new sync file
+                val fileMetadata = com.google.api.services.drive.model.File().apply {
+                    name = SYNC_FILE_NAME
+                    parents = listOf(folderId)
+                }
+
+                driveService.files().create(fileMetadata, mediaContent).execute()
+                return@withContext "Initial database sync created successfully"
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error backing up database", e)
+            Log.e(TAG, "Error synchronizing database", e)
             return@withContext "Error: ${e.message}"
         }
     }
 
     /**
-     * Restore database from most recent Google Drive backup
+     * Restore database from synchronized Google Drive backup
      * @return Success or error message
      */
     suspend fun restoreDatabase(): String = withContext(Dispatchers.IO) {
@@ -130,23 +135,13 @@ class GoogleDriveService(private val context: Context) {
             // Find app folder
             val folderId = findAppFolder(driveService) ?: return@withContext "No backup folder found"
 
-            // Find most recent backup
-            val result = driveService.files().list()
-                .setQ("'$folderId' in parents and trashed = false")
-                .setOrderBy("createdTime desc")
-                .setPageSize(1)
-                .setFields("files(id, name)")
-                .execute()
-
-            if (result.files.isEmpty()) {
-                return@withContext "No backups found"
-            }
-
-            val backupFile = result.files[0]
+            // Find sync file
+            val syncFileId = findSyncFile(driveService, folderId)
+                ?: return@withContext "No synchronized backup found"
 
             // Download backup file
             val tempFile = File(context.cacheDir, "temp_backup.db")
-            driveService.files().get(backupFile.id)
+            driveService.files().get(syncFileId)
                 .executeMediaAndDownloadTo(FileOutputStream(tempFile))
 
             // Close database connections
@@ -160,7 +155,7 @@ class GoogleDriveService(private val context: Context) {
             // Reopen database
             AppDatabase.getDatabase(context)
 
-            return@withContext "Database restored successfully from ${backupFile.name}"
+            return@withContext "Database restored successfully from synchronized backup"
         } catch (e: Exception) {
             Log.e(TAG, "Error restoring database", e)
             return@withContext "Error: ${e.message}"
@@ -214,24 +209,20 @@ class GoogleDriveService(private val context: Context) {
     }
 
     /**
-     * Keep only the 5 most recent backups
+     * Find sync file in Google Drive
      */
-    private fun cleanupOldBackups(driveService: Drive, folderId: String) {
+    private fun findSyncFile(driveService: Drive, folderId: String): String? {
         try {
             val result = driveService.files().list()
-                .setQ("'$folderId' in parents and trashed = false")
-                .setOrderBy("createdTime desc")
-                .setFields("files(id, name)")
+                .setQ("name = '$SYNC_FILE_NAME' and '$folderId' in parents and trashed = false")
+                .setSpaces("drive")
+                .setFields("files(id)")
                 .execute()
 
-            if (result.files.size > 5) {
-                // Delete older backups (keeping the 5 most recent)
-                for (i in 5 until result.files.size) {
-                    driveService.files().delete(result.files[i].id).execute()
-                }
-            }
+            return if (result.files.isNotEmpty()) result.files[0].id else null
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to cleanup old backups", e)
+            Log.e(TAG, "Failed to find sync file", e)
+            return null
         }
     }
 

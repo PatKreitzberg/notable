@@ -95,7 +95,7 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
         ) {
             // Title
             Text(
-                text = "Google Drive Backup",
+                text = "Google Drive Synchronization",
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
@@ -157,17 +157,17 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
 
             Divider(modifier = Modifier.padding(vertical = 8.dp))
 
-            // Backup and restore buttons (only enabled when signed in)
+            // Sync and restore buttons (only enabled when signed in)
             if (isSignedIn) {
                 Row(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     ActionButton(
-                        text = "Backup Now",
+                        text = "Sync Now",
                         onClick = {
                             scope.launch {
                                 isLoading = true
-                                statusMessage = "Creating backup..."
+                                statusMessage = "Synchronizing database..."
 
                                 val result = driveService.backupDatabase()
 
@@ -179,7 +179,6 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
                                 )
                             }
                         },
-                        //modifier = Modifier.weight(1f)
                     )
 
                     Spacer(modifier = Modifier.width(8.dp))
@@ -189,7 +188,7 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
                         onClick = {
                             scope.launch {
                                 isLoading = true
-                                statusMessage = "Restoring from backup..."
+                                statusMessage = "Restoring from sync..."
 
                                 val result = driveService.restoreDatabase()
 
@@ -201,12 +200,11 @@ fun GoogleDriveBackupDialog(onClose: () -> Unit) {
                                 )
                             }
                         },
-                        //modifier = Modifier.weight(1f)
                     )
                 }
             } else {
                 Text(
-                    text = "Sign in with Google to backup or restore your database",
+                    text = "Sign in with Google to sync or restore your database",
                     color = Color.Gray,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )

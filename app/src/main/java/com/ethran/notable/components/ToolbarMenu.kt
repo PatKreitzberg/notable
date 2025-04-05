@@ -287,7 +287,7 @@ fun ToolbarMenu(
                     .noRippleClickable {
                         showGoogleDriveBackupDialog = true
                     }
-            ) { Text("Google Drive Backup") }
+            ) { Text("Google Drive Sync") }
 
             Box(
                 Modifier
